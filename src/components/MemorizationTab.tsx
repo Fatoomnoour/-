@@ -6,6 +6,7 @@ import {
 import { MemorizationPlan, User, RevisionSession } from "../types";
 import { SURAHS } from "../data/surahs";
 import SpacedRepetitionExplanation from "./SpacedRepetitionExplanation";
+import { getUserMemorizationPlans, createMemorizationPlan, deleteMemorizationPlan, updateMemorizationPlan } from "../services/firestoreService";
 
 interface MemorizationTabProps {
   currentUser: User | null;
@@ -36,11 +37,8 @@ export default function MemorizationTab({ currentUser, onRefreshStats }: Memoriz
     if (!currentUser) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/memorization?userId=${encodeURIComponent(currentUser.id)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setPlans(data);
-      }
+      const userPlans = await getUserMemorizationPlans(currentUser.id);
+      setPlans(userPlans);
     } catch (err) {
       console.error(err);
     } finally {
@@ -55,26 +53,22 @@ export default function MemorizationTab({ currentUser, onRefreshStats }: Memoriz
     setIsSubmitting(true);
     try {
       const surahName = SURAHS.find(s => s.id === selectedSurahId)?.name || "";
-      const res = await fetch("/api/memorization", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: currentUser.id,
-          title,
-          surahId: selectedSurahId,
-          surahName,
-          startVerse,
-          endVerse,
-          targetDate: new Date().toISOString() // Not heavily used anymore, but kept for schema
-        }),
+      await createMemorizationPlan(currentUser.id, {
+        userId: currentUser.id,
+        title,
+        surahId: selectedSurahId,
+        surahName,
+        startVerse,
+        endVerse,
+        completed: false,
+        intervalDays: 1,
+        nextReviewDate: new Date().toISOString()
       });
 
-      if (res.ok) {
-        setIsAdding(false);
-        setTitle("");
-        fetchPlans();
-        onRefreshStats();
-      }
+      setIsAdding(false);
+      setTitle("");
+      fetchPlans();
+      onRefreshStats();
     } catch (err) {
       console.error(err);
     } finally {
@@ -85,13 +79,9 @@ export default function MemorizationTab({ currentUser, onRefreshStats }: Memoriz
   const handleDeletePlan = async (planId: string) => {
     if (!currentUser || !confirm("هل أنت متأكد من حذف هذه الخطة؟")) return;
     try {
-      const res = await fetch(`/api/memorization/${planId}?userId=${encodeURIComponent(currentUser.id)}`, {
-        method: "DELETE",
-      });
-      if (res.ok) {
-        fetchPlans();
-        onRefreshStats();
-      }
+      await deleteMemorizationPlan(currentUser.id, planId);
+      fetchPlans();
+      onRefreshStats();
     } catch (err) {
       console.error(err);
     }
@@ -111,20 +101,13 @@ export default function MemorizationTab({ currentUser, onRefreshStats }: Memoriz
     nextReviewDate.setDate(nextReviewDate.getDate() + nextInterval);
 
     try {
-      const res = await fetch(`/api/memorization/${planId}/review`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: currentUser.id,
-          rating, // "excellent"|"good"|"weak" mapped internally or backend modified to accept these
-          nextReviewDate: nextReviewDate.toISOString(),
-          intervalDays: nextInterval
-        }),
+      await updateMemorizationPlan(currentUser.id, planId, {
+        nextReviewDate: nextReviewDate.toISOString(),
+        intervalDays: nextInterval,
+        completed: rating === "mastered"
       });
-      if (res.ok) {
-        setReviewPlanId(null);
-        fetchPlans();
-      }
+      setReviewPlanId(null);
+      fetchPlans();
     } catch (err) {
       console.error(err);
     }

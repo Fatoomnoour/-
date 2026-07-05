@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { ReadingProgress, User } from "../types";
 import { SURAHS } from "../data/surahs";
+import { getReadingProgress, saveReadingProgress } from "../services/firestoreService";
 
 interface ProgressTabProps {
   currentUser: User | null;
@@ -29,10 +30,9 @@ export default function ProgressTab({ currentUser, onRefreshStats }: ProgressTab
   const fetchProgress = async () => {
     setIsLoading(true);
     try {
-      const userId = currentUser?.id || "kidscodinghub1512@gmail.com";
-      const res = await fetch(`/api/progress?userId=${encodeURIComponent(userId)}`);
-      if (res.ok) {
-        const data = await res.json();
+      if (!currentUser) return;
+      const data = await getReadingProgress(currentUser.id);
+      if (data) {
         setProgress(data);
         setSelectedSurahId(data.lastSurahId);
         setVerseNumber(data.lastVerseNumber);
@@ -56,32 +56,34 @@ export default function ProgressTab({ currentUser, onRefreshStats }: ProgressTab
 
   const handleUpdateProgress = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!currentUser) return;
     setIsUpdating(true);
     setMsg("");
 
     const surahName = activeSurahMeta?.name || "الفاتحة";
-    const userId = currentUser?.id || "kidscodinghub1512@gmail.com";
 
     try {
-      const res = await fetch("/api/progress", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
+      await saveReadingProgress(currentUser.id, {
+        lastSurahId: selectedSurahId,
+        lastSurahName: surahName,
+        lastVerseNumber: verseNumber,
+        dailyGoalVerses: dailyGoal
+      });
+      
+      // Update local state directly to be responsive
+      if (progress) {
+        setProgress({
+          ...progress,
           lastSurahId: selectedSurahId,
           lastSurahName: surahName,
           lastVerseNumber: verseNumber,
           dailyGoalVerses: dailyGoal
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setProgress(data);
-        setMsg("تم تحديث تقدم القراءة بنجاح! طاب يومك بذكر الله.");
-        onRefreshStats();
-        setTimeout(() => setMsg(""), 3500);
+        });
       }
+
+      setMsg("تم تحديث تقدم القراءة بنجاح! طاب يومك بذكر الله.");
+      onRefreshStats();
+      setTimeout(() => setMsg(""), 3500);
     } catch (err) {
       setMsg("حدث خطأ أثناء تحديث تقدم القراءة.");
     } finally {
@@ -90,7 +92,7 @@ export default function ProgressTab({ currentUser, onRefreshStats }: ProgressTab
   };
 
   const handleToggleSurahCompleted = async (surahId: number) => {
-    if (!progress) return;
+    if (!progress || !currentUser) return;
     const isCompleted = progress.completedSurahs.includes(surahId);
     let updatedList = [...progress.completedSurahs];
 
@@ -100,23 +102,17 @@ export default function ProgressTab({ currentUser, onRefreshStats }: ProgressTab
       updatedList.push(surahId);
     }
 
-    const userId = currentUser?.id || "kidscodinghub1512@gmail.com";
-
     try {
-      const res = await fetch("/api/progress", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          completedSurahs: updatedList
-        })
+      await saveReadingProgress(currentUser.id, {
+        completedSurahs: updatedList
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        setProgress(data);
-        onRefreshStats();
-      }
+      // Update local state
+      setProgress({
+        ...progress,
+        completedSurahs: updatedList
+      });
+      onRefreshStats();
     } catch (err) {
       console.error("Error toggling surah completion:", err);
     }

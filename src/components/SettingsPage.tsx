@@ -4,6 +4,9 @@ import {
 } from "lucide-react";
 import { User, ReadingProgress } from "../types";
 import { requestNotificationPermission, scheduleLocalNotification } from "../utils/notifications";
+import { getReadingProgress, saveReadingProgress } from "../services/firestoreService";
+import { updateProfile } from "firebase/auth";
+import { auth } from "../lib/firebase";
 
 interface SettingsPageProps {
   currentUser: User | null;
@@ -55,10 +58,9 @@ export default function SettingsPage({
   const fetchGoal = async () => {
     if (!currentUser) return;
     try {
-      const res = await fetch(`/api/progress?userId=${encodeURIComponent(currentUser.id)}`);
-      if (res.ok) {
-        const progress = await res.json();
-        setDailyGoal(progress.dailyGoalVerses || 10);
+      const data = await getReadingProgress(currentUser.id);
+      if (data) {
+        setDailyGoal(data.dailyGoalVerses || 10);
       }
     } catch (err) {
       console.error(err);
@@ -74,34 +76,19 @@ export default function SettingsPage({
 
     setIsSaving(true);
     try {
-      // 1. Update display name in user session
-      const userRes = await fetch("/api/auth/update-profile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: currentUser.id,
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, {
           displayName: displayName
-        })
-      });
-
-      // 2. Update reading goal in progress collection
-      const goalRes = await fetch("/api/progress", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: currentUser.id,
-          dailyGoalVerses: Number(dailyGoal)
-        })
-      });
-
-      if (userRes.ok && goalRes.ok) {
-        const updatedUser = await userRes.json();
-        onUpdateUser(updatedUser);
-        onShowToast("تم حفظ التعديلات وإعدادات الحفظ والورد بنجاح! ⚙️", "success");
-        onRefreshStats();
-      } else {
-        throw new Error();
+        });
       }
+
+      await saveReadingProgress(currentUser.id, {
+        dailyGoalVerses: Number(dailyGoal)
+      });
+
+      onUpdateUser({ ...currentUser, name: displayName });
+      onShowToast("تم حفظ التعديلات وإعدادات الحفظ والورد بنجاح! ⚙️", "success");
+      onRefreshStats();
     } catch (err) {
       onShowToast("فشل حفظ التعديلات، يرجى المحاولة لاحقاً", "error");
     } finally {

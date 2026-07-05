@@ -1,3 +1,4 @@
+import { getUserGroups, createGroup, joinGroup } from "../../services/firestoreService";
 import React, { useState, useEffect } from "react";
 import { User, QuranGroup } from "../../types";
 import { Users, Plus, Key, BookOpen } from "lucide-react";
@@ -37,11 +38,8 @@ export default function GroupsTab({ currentUser, onShowToast }: GroupsTabProps) 
     if (!currentUser) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/groups?userId=${encodeURIComponent(currentUser.id)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setGroups(data);
-      }
+      const userGroups = await getUserGroups(currentUser.id);
+      setGroups(userGroups);
     } catch (err) {
       console.error(err);
     } finally {
@@ -55,27 +53,21 @@ export default function GroupsTab({ currentUser, onShowToast }: GroupsTabProps) 
     
     try {
       const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const res = await fetch("/api/groups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...newGroupData,
-          joinCode: code,
-          adminId: currentUser.id,
-          members: [{
-            userId: currentUser.id,
-            name: currentUser.displayName || currentUser.name || "عضو",
-            role: "admin",
-            joinedAt: new Date().toISOString()
-          }]
-        })
+      await createGroup(currentUser.id, {
+        ...newGroupData,
+        joinCode: code,
+        adminId: currentUser.id,
+        members: [{ // Initial members array just for display cache, though subcollection exists
+          userId: currentUser.id,
+          name: currentUser.displayName || currentUser.name || "عضو",
+          role: "admin",
+          joinedAt: new Date().toISOString()
+        }]
       });
       
-      if (res.ok) {
-        setIsCreating(false);
-        fetchGroups();
-        onShowToast("تم إنشاء حلقة التدبر بنجاح!", "success");
-      }
+      setIsCreating(false);
+      fetchGroups();
+      onShowToast("تم إنشاء حلقة التدبر بنجاح!", "success");
     } catch (err) {
       onShowToast("حدث خطأ أثناء الإنشاء", "error");
     }
@@ -86,27 +78,13 @@ export default function GroupsTab({ currentUser, onShowToast }: GroupsTabProps) 
     if (!currentUser) return;
     
     try {
-      const res = await fetch("/api/groups/join", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: currentUser.id,
-          userName: currentUser.displayName || currentUser.name || "عضو",
-          joinCode
-        })
-      });
-      
-      if (res.ok) {
-        setIsJoining(false);
-        setJoinCode("");
-        fetchGroups();
-        onShowToast("تم الانضمام للحلقة بنجاح!", "success");
-      } else {
-        const error = await res.json();
-        onShowToast(error.error || "رمز الانضمام غير صحيح", "error");
-      }
-    } catch (err) {
-      onShowToast("حدث خطأ أثناء الانضمام", "error");
+      await joinGroup(currentUser.id, joinCode, currentUser.displayName || currentUser.name || "عضو");
+      setIsJoining(false);
+      setJoinCode("");
+      fetchGroups();
+      onShowToast("تم الانضمام للحلقة بنجاح!", "success");
+    } catch (err: any) {
+      onShowToast(err.message || "رمز الانضمام غير صحيح أو حدث خطأ", "error");
     }
   };
 

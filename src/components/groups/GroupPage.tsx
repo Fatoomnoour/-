@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { User, QuranGroup, GroupReflection } from "../../types";
 import { ArrowLeft, BookOpen, Users, Copy, Sparkles, MessageCircle, Heart, Star, Send } from "lucide-react";
+import { getGroupReflections, addGroupReflection } from "../../services/firestoreService";
 
 interface GroupPageProps {
   group: QuranGroup;
@@ -23,11 +24,8 @@ export default function GroupPage({ group, currentUser, onBack, onShowToast }: G
   const fetchReflections = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/groups/${group.id}/reflections`);
-      if (res.ok) {
-        const data = await res.json();
-        setReflections(data);
-      }
+      const data = await getGroupReflections(group.id);
+      setReflections(data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -41,24 +39,18 @@ export default function GroupPage({ group, currentUser, onBack, onShowToast }: G
     
     setIsSubmitting(true);
     try {
-      const res = await fetch(`/api/groups/${group.id}/reflections`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: currentUser.id,
-          userName: currentUser.displayName || currentUser.name || "عضو",
-          surahId: group.surahId,
-          surahName: group.surahName,
-          verseRange: group.verseRange,
-          reflectionText: newReflection
-        })
+      await addGroupReflection(group.id, {
+        userId: currentUser.id,
+        userName: currentUser.displayName || currentUser.name || "عضو",
+        surahId: group.surahId,
+        surahName: group.surahName,
+        verseRange: group.verseRange,
+        reflectionText: newReflection
       });
       
-      if (res.ok) {
-        setNewReflection("");
-        fetchReflections();
-        onShowToast("تم نشر التدبر في الحلقة", "success");
-      }
+      setNewReflection("");
+      fetchReflections();
+      onShowToast("تم نشر التدبر في الحلقة", "success");
     } catch (err) {
       onShowToast("حدث خطأ أثناء النشر", "error");
     } finally {

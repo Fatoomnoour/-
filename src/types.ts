@@ -12,11 +12,19 @@ export interface QuranNote {
   surahId: number;
   surahName: string;
   verseNumber: number;
-  verseText: string; // Verified Quran text placeholder (the user requests never using AI to generate verses)
-  reflectionText: string; // The reflection notes typed by the user
+  verseKey?: string;
+  verseText: string;
+  title?: string;
+  reflectionText: string;
+  lesson?: string;
+  actionStep?: string;
+  dua?: string;
   tags: string[];
+  color?: string;
   pinned: boolean;
   isFavorite: boolean;
+  isPrivate?: boolean;
+  status?: string;
   createdAt: string;
   updatedAt: string;
 }

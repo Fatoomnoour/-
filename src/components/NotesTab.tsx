@@ -6,6 +6,7 @@ import {
 import { QuranNote, User } from "../types";
 import { SURAHS } from "../data/surahs";
 import { VERIFIED_VERSES } from "../data/verses";
+import { getUserNotes, deleteNote, updateNote, createNote } from "../services/firestoreService";
 
 interface NotesTabProps {
   currentUser: User | null;
@@ -43,17 +44,22 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
   const fetchNotes = async () => {
     setIsLoading(true);
     try {
-      const userId = currentUser?.id || "kidscodinghub1512@gmail.com";
-      let url = `/api/notes?userId=${encodeURIComponent(userId)}`;
-      if (search) url += `&search=${encodeURIComponent(search)}`;
-      if (selectedSurahFilter) url += `&surahId=${selectedSurahFilter}`;
-      if (selectedTagFilter) url += `&tag=${encodeURIComponent(selectedTagFilter)}`;
-
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        setNotes(data);
+      if (!currentUser) return;
+      const data = await getUserNotes(currentUser.id, selectedSurahFilter ? Number(selectedSurahFilter) : undefined);
+      
+      // Filter locally for now
+      let filtered = data;
+      if (search) {
+        filtered = filtered.filter(n => 
+          n.reflectionText.includes(search) || 
+          n.verseText.includes(search) ||
+          n.title?.includes(search)
+        );
       }
+      if (selectedTagFilter) {
+        filtered = filtered.filter(n => n.tags.includes(selectedTagFilter));
+      }
+      setNotes(filtered);
     } catch (err) {
       console.error("Error fetching notes:", err);
     } finally {
@@ -131,29 +137,15 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
     };
 
     try {
-      let res;
       if (editingNote) {
-        res = await fetch(`/api/notes/${editingNote.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
+        await updateNote(currentUser.id, editingNote.id, payload);
       } else {
-        res = await fetch("/api/notes", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
+        await createNote(currentUser.id, payload);
       }
 
-      if (res.ok) {
-        setIsModalOpen(false);
-        fetchNotes();
-        onRefreshStats();
-      } else {
-        const data = await res.json();
-        setErrorMsg(data.error || "حدث خطأ أثناء حفظ الخاطرة.");
-      }
+      setIsModalOpen(false);
+      fetchNotes();
+      onRefreshStats();
     } catch (err) {
       setErrorMsg("خطأ في الاتصال بالخادم.");
     } finally {
@@ -162,36 +154,33 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
   };
 
   const handleDelete = async (id: string) => {
+    if (!currentUser) return;
     if (!confirm("هل أنت متأكد من رغبتك في حذف هذه الخاطرة التفكرية؟")) return;
     try {
-      const res = await fetch(`/api/notes/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        fetchNotes();
-        onRefreshStats();
-      }
+      await deleteNote(currentUser.id, id);
+      fetchNotes();
+      onRefreshStats();
     } catch (err) {
       console.error("Error deleting note:", err);
     }
   };
 
-  const handleTogglePin = async (id: string) => {
+  const handleTogglePin = async (note: QuranNote) => {
+    if (!currentUser) return;
     try {
-      const res = await fetch(`/api/notes/${id}/pin`, { method: "POST" });
-      if (res.ok) {
-        fetchNotes();
-      }
+      await updateNote(currentUser.id, note.id, { pinned: !note.pinned });
+      fetchNotes();
     } catch (err) {
       console.error("Error toggling pin:", err);
     }
   };
 
-  const handleToggleFavorite = async (id: string) => {
+  const handleToggleFavorite = async (note: QuranNote) => {
+    if (!currentUser) return;
     try {
-      const res = await fetch(`/api/notes/${id}/favorite`, { method: "POST" });
-      if (res.ok) {
-        fetchNotes();
-        onRefreshStats();
-      }
+      await updateNote(currentUser.id, note.id, { isFavorite: !note.isFavorite });
+      fetchNotes();
+      onRefreshStats();
     } catch (err) {
       console.error("Error toggling favorite:", err);
     }
@@ -334,7 +323,7 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
                   {/* Action Buttons */}
                   <div className="flex items-center gap-1.5 opacity-90 md:opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
-                      onClick={() => handleTogglePin(note.id)}
+                      onClick={() => handleTogglePin(note)}
                       className={`p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition ${note.pinned ? "text-emerald-600" : "text-slate-400"}`}
                       title="تثبيت في الأعلى"
                       id={`pin-btn-${note.id}`}
@@ -342,7 +331,7 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
                       <Pin className={`h-4 w-4 ${note.pinned ? "fill-emerald-600" : ""}`} />
                     </button>
                     <button
-                      onClick={() => handleToggleFavorite(note.id)}
+                      onClick={() => handleToggleFavorite(note)}
                       className={`p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition ${note.isFavorite ? "text-amber-500" : "text-slate-400"}`}
                       title="إضافة للمفضلة"
                       id={`fav-btn-${note.id}`}

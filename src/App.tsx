@@ -17,23 +17,31 @@ import ProgressPage from "./components/ProgressPage";
 import SettingsPage from "./components/SettingsPage";
 import AuthPage from "./components/AuthPage";
 import Toast, { ToastType } from "./components/Toast";
+import { subscribeToAuthChanges, logout } from "./services/authService";
+import { getUserNotes, getUserBookmarks, getReadingProgress, getUserMemorizationPlans, updateMemorizationPlan } from "./services/firestoreService";
 import { User, MemorizationPlan } from "./types";
 import { SURAH_VERSE_COUNTS } from "./utils/quranUtils";
 import { Theme, useDarkMode } from "./hooks/useDarkMode";
 
 export default function App() {
   // Session Persistence
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem("user");
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return null;
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToAuthChanges((firebaseUser) => {
+      if (firebaseUser) {
+        setCurrentUser({
+          id: firebaseUser.uid,
+          name: firebaseUser.displayName || firebaseUser.email || "مستخدم",
+          email: firebaseUser.email || "",
+          photoURL: firebaseUser.photoURL || undefined,
+        });
+      } else {
+        setCurrentUser(null);
       }
-    }
-    return null;
-  });
+    });
+    return () => unsubscribe();
+  }, []);
 
   const [activeTab, setActiveTab] = useState<"reader" | "notes" | "progress" | "bookmarks" | "memorization" | "active-recitation" | "settings">("reader");
   const { theme, setTheme, isDark: darkMode } = useDarkMode();
@@ -54,7 +62,7 @@ export default function App() {
 
   // Last read position & reader jumper props
   const [lastRead, setLastRead] = useState<{ surahId: number; verseNum: number; surahName: string } | null>(null);
-  const [readerInitialPosition, setReaderInitialPosition] = useState<{ surahId: number; verseNumber: number } | null>(null);
+  const [readerInitialPosition, setReaderInitialPosition] = useState<{ surahId: number; verseNumber: number; ts?: number } | null>(null);
 
   // Sync hash/route path for /quran or #/quran
   useEffect(() => {
@@ -80,10 +88,7 @@ export default function App() {
         } catch (e) {}
       }
       
-      fetch(`/api/progress?userId=${encodeURIComponent(currentUser.id)}`)
-        .then(res => {
-          if (res.ok) return res.json();
-        })
+      getReadingProgress(currentUser.id)
         .then(data => {
           if (data && data.lastSurahId) {
             const pos = {
@@ -130,52 +135,24 @@ export default function App() {
   };
 
   // Real Email / Password and Google Login callbacks
-  const handleLogin = async (email: string, name: string) => {
+      const handleLogout = async () => {
     try {
-      const res = await fetch("/api/auth/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, name })
+      await logout();
+      setCurrentUser(null);
+      setActiveMemoPlan(null);
+      setActiveAudio(null);
+      handleShowToast("تم تسجيل خروجك بنجاح. رافقتك السلامة والبركة!", "info");
+      setStats({
+        notesCount: 0,
+        favoritesCount: 0,
+        bookmarksCount: 0,
+        completedSurahsCount: 0,
+        plansCount: 0
       });
-      if (res.ok) {
-        const data = await res.json();
-        setCurrentUser(data.user);
-        localStorage.setItem("user", JSON.stringify(data.user));
-        handleShowToast(`أهلاً بك مجدداً يا ${data.user.displayName || name || "باغي الخير"}! ✨`, "success");
-      }
     } catch (err) {
-      console.error("Auth login failed", err);
-      // Fallback offline session
-      const fallbackUser = { id: email.toLowerCase(), name, email: email.toLowerCase() };
-      setCurrentUser(fallbackUser);
-      localStorage.setItem("user", JSON.stringify(fallbackUser));
-      handleShowToast("تم تفعيل جلسة تصفح محلية", "info");
+      console.error(err);
+      handleShowToast("فشل تسجيل الخروج.", "error");
     }
-  };
-
-  const handleAuthSuccess = (user: User) => {
-    setCurrentUser(user);
-    localStorage.setItem("user", JSON.stringify(user));
-    handleShowToast(`مرحباً بك مجدداً، ${user.displayName || user.name}! ✨`, "success");
-  };
-
-  const handleGoogleLoginSimulate = async (email: string, name: string) => {
-    await handleLogin(email, name);
-  };
-
-  const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem("user");
-    setActiveMemoPlan(null);
-    setActiveAudio(null);
-    handleShowToast("تم تسجيل خروجك بنجاح. رافقتك السلامة والبركة!", "info");
-    setStats({
-      notesCount: 0,
-      favoritesCount: 0,
-      bookmarksCount: 0,
-      completedSurahsCount: 0,
-      plansCount: 0
-    });
   };
 
   // Fetch quick stats for the user dashboard
@@ -184,43 +161,19 @@ export default function App() {
     setIsStatsLoading(true);
     try {
       const userId = currentUser.id;
-      const [resNotes, resBookmarks, resProgress, resPlans] = await Promise.all([
-        fetch(`/api/notes?userId=${encodeURIComponent(userId)}`),
-        fetch(`/api/bookmarks?userId=${encodeURIComponent(userId)}`),
-        fetch(`/api/progress?userId=${encodeURIComponent(userId)}`),
-        fetch(`/api/memorization?userId=${encodeURIComponent(userId)}`)
+      const [notes, bookmarks, progress, plans] = await Promise.all([
+        getUserNotes(userId),
+        getUserBookmarks(userId),
+        getReadingProgress(userId),
+        getUserMemorizationPlans(userId)
       ]);
 
-      let notesCount = 0;
-      let favoritesCount = 0;
-      let bookmarksCount = 0;
-      let completedSurahsCount = 0;
-      let plansCount = 0;
-
-      if (resNotes.ok) {
-        const notes = await resNotes.json();
-        notesCount = notes.length;
-        favoritesCount = notes.filter((n: any) => n.isFavorite).length;
-      }
-      if (resBookmarks.ok) {
-        const bookmarks = await resBookmarks.json();
-        bookmarksCount = bookmarks.length;
-      }
-      if (resProgress.ok) {
-        const progress = await resProgress.json();
-        completedSurahsCount = progress.completedSurahs?.length || 0;
-      }
-      if (resPlans.ok) {
-        const plans = await resPlans.json();
-        plansCount = plans.length;
-      }
-
       setStats({
-        notesCount,
-        favoritesCount,
-        bookmarksCount,
-        completedSurahsCount,
-        plansCount
+        notesCount: notes.length,
+        favoritesCount: notes.filter(n => n.isFavorite).length,
+        bookmarksCount: bookmarks.length,
+        completedSurahsCount: progress?.completedSurahs?.length || 0,
+        plansCount: plans.length
       });
     } catch (err) {
       console.error("Error fetching statistics:", err);
@@ -272,20 +225,16 @@ export default function App() {
     nextReviewDate: string
   ) => {
     try {
-      const res = await fetch(`/api/memorization/${planId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      await updateMemorizationPlan(currentUser.id, planId, {
           nextReviewDate,
           intervalDays,
           revisionHistory: [
             { date: new Date().toISOString().split('T')[0], rating },
             ...(activeMemoPlan?.revisionHistory || [])
           ]
-        })
-      });
+        });
 
-      if (res.ok) {
+      if (true) {
         setActiveMemoPlan(null);
         fetchStats();
         setActiveTab("progress");
@@ -312,10 +261,7 @@ export default function App() {
   if (!currentUser) {
     return (
       <>
-        <AuthPage 
-          onAuthSuccess={handleAuthSuccess}
-          onGoogleLoginSimulate={handleGoogleLoginSimulate}
-        />
+        <AuthPage />
         <Toast toasts={toasts} onClose={handleCloseToast} />
       </>
     );
@@ -333,7 +279,7 @@ export default function App() {
       {!isReaderFocus && (
         <Header 
           currentUser={currentUser} 
-          onLogin={handleLogin} 
+           
           onLogout={handleLogout}
         />
       )}
@@ -384,7 +330,7 @@ export default function App() {
             <div className="flex items-center gap-2 w-full md:w-auto justify-end">
               <button
                 onClick={() => {
-                  setReaderInitialPosition({ surahId: 1, verseNumber: 1 });
+                  setReaderInitialPosition({ surahId: 1, verseNumber: 1, ts: Date.now() });
                   setActiveTab("reader");
                 }}
                 className="flex-1 md:flex-none px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-xl transition cursor-pointer text-center"
@@ -395,9 +341,9 @@ export default function App() {
               <button
                 onClick={() => {
                   if (lastRead) {
-                    setReaderInitialPosition({ surahId: lastRead.surahId, verseNumber: lastRead.verseNum });
+                    setReaderInitialPosition({ surahId: lastRead.surahId, verseNumber: lastRead.verseNum, ts: Date.now() });
                   } else {
-                    setReaderInitialPosition({ surahId: 1, verseNumber: 1 });
+                    setReaderInitialPosition({ surahId: 1, verseNumber: 1, ts: Date.now() });
                   }
                   setActiveTab("reader");
                 }}
@@ -532,6 +478,7 @@ export default function App() {
             <div className="bg-slate-50 dark:bg-slate-950 rounded-2xl">
               {activeTab === "reader" && (
                 <QuranReader 
+                  key={readerInitialPosition?.ts || "reader"}
                   currentUser={currentUser} 
                   onShowToast={handleShowToast}
                   onRefreshStats={fetchStats}
@@ -614,6 +561,28 @@ export default function App() {
           })}
         </nav>
       )}
+
+      
+      {/* Footer / Author Info */}
+      <footer className="w-full max-w-7xl mx-auto px-4 py-8 mt-12 border-t border-slate-200 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4 text-center md:text-right">
+        <div>
+          <h4 className="text-sm font-black text-slate-800 dark:text-slate-200 mb-1">أثر آية</h4>
+          <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">منصة قرآنية متكاملة لتدبر وحفظ القرآن الكريم</p>
+        </div>
+        
+        <div className="flex flex-col items-center md:items-end gap-1">
+          <span className="text-xs text-slate-500 font-bold">تطوير وتصميم:</span>
+          <a 
+            href="https://www.linkedin.com/in/fatma-nour-ai-trainer" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-sm font-black text-emerald-600 hover:text-emerald-500 transition"
+          >
+            Fatma Nour (AI Trainer)
+          </a>
+          <span className="text-[10px] text-slate-400 mt-1">للتواصل والاقتراحات</span>
+        </div>
+      </footer>
 
       {/* Fixed advanced sticky Audio Player */}
       {activeAudio && (

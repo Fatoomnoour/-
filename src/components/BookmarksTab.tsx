@@ -6,6 +6,7 @@ import {
 import { Bookmark as BookmarkType, QuranNote, User } from "../types";
 import { SURAHS } from "../data/surahs";
 import { VERIFIED_VERSES } from "../data/verses";
+import { getUserBookmarks, getUserNotes, createBookmark, deleteBookmark, updateNote } from "../services/firestoreService";
 
 interface BookmarksTabProps {
   currentUser: User | null;
@@ -32,21 +33,13 @@ export default function BookmarksTab({ currentUser, onRefreshStats }: BookmarksT
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const userId = currentUser?.id || "kidscodinghub1512@gmail.com";
+      if (!currentUser) return;
       
-      // Fetch Bookmarks
-      const resB = await fetch(`/api/bookmarks?userId=${encodeURIComponent(userId)}`);
-      if (resB.ok) {
-        const dataB = await resB.json();
-        setBookmarks(dataB);
-      }
+      const userBookmarks = await getUserBookmarks(currentUser.id);
+      setBookmarks(userBookmarks);
 
-      // Fetch Favorite Notes
-      const resF = await fetch(`/api/notes?userId=${encodeURIComponent(userId)}`);
-      if (resF.ok) {
-        const dataF: QuranNote[] = await resF.json();
-        setFavoriteNotes(dataF.filter(note => note.isFavorite));
-      }
+      const userNotes = await getUserNotes(currentUser.id);
+      setFavoriteNotes(userNotes.filter(note => note.isFavorite));
     } catch (err) {
       console.error("Error fetching bookmark data:", err);
     } finally {
@@ -64,34 +57,25 @@ export default function BookmarksTab({ currentUser, onRefreshStats }: BookmarksT
 
   const handleAddBookmark = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!currentUser) return;
     setIsSubmitting(true);
     setErrorMsg("");
 
-    const userId = currentUser?.id || "kidscodinghub1512@gmail.com";
     const surahName = selectedSurahMeta?.name || "الفاتحة";
 
     try {
-      const res = await fetch("/api/bookmarks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          surahId: formSurahId,
-          surahName,
-          verseNumber: formVerseNumber,
-          note: formNote
-        })
+      await createBookmark(currentUser.id, {
+        userId: currentUser.id,
+        surahId: formSurahId,
+        surahName,
+        verseNumber: formVerseNumber,
+        note: formNote
       });
 
-      if (res.ok) {
-        setIsAdding(false);
-        setFormNote("");
-        fetchData();
-        onRefreshStats();
-      } else {
-        const errData = await res.json();
-        setErrorMsg(errData.error || "حدث خطأ أثناء حفظ الفاصل.");
-      }
+      setIsAdding(false);
+      setFormNote("");
+      fetchData();
+      onRefreshStats();
     } catch (err) {
       setErrorMsg("خطأ في الاتصال بالخادم.");
     } finally {
@@ -100,24 +84,24 @@ export default function BookmarksTab({ currentUser, onRefreshStats }: BookmarksT
   };
 
   const handleDeleteBookmark = async (id: string) => {
+    if (!currentUser) return;
+    if (!confirm("هل أنت متأكد من حذف هذه العلامة المرجعية؟")) return;
     try {
-      const res = await fetch(`/api/bookmarks/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        fetchData();
-        onRefreshStats();
-      }
+      await deleteBookmark(currentUser.id, id);
+      fetchData();
+      onRefreshStats();
     } catch (err) {
       console.error("Error deleting bookmark:", err);
     }
   };
 
   const handleRemoveFavorite = async (noteId: string) => {
+    if (!currentUser) return;
+    if (!confirm("هل تريد إزالة هذه الخاطرة من المفضلة؟")) return;
     try {
-      const res = await fetch(`/api/notes/${noteId}/favorite`, { method: "POST" });
-      if (res.ok) {
-        fetchData();
-        onRefreshStats();
-      }
+      await updateNote(currentUser.id, noteId, { isFavorite: false });
+      fetchData();
+      onRefreshStats();
     } catch (err) {
       console.error("Error removing favorite note:", err);
     }

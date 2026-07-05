@@ -7,8 +7,18 @@ import {
 } from "lucide-react";
 import { SURAH_LIST, JUZ_LIST, JUZ_STARTING_POSITIONS, SURAH_VERSE_COUNTS, getAbsoluteAyah } from "../utils/quranUtils";
 import { User, Bookmark as BookmarkType, QuranNote, MemorizationPlan } from "../types";
+import { 
+  createNote, 
+  getUserNotes, 
+  createBookmark, 
+  getUserBookmarks, 
+  deleteBookmark, 
+  saveReadingProgress, 
+  createMemorizationPlan 
+} from "../services/firestoreService";
 
 interface QuranReaderProps {
+  key?: React.Key | string | number;
   currentUser: User | null;
   onShowToast: (msg: string, type: "success" | "error" | "info") => void;
   onRefreshStats: () => void;
@@ -74,6 +84,13 @@ export default function QuranReader({
   const [reflections, setReflections] = useState<QuranNote[]>([]);
   const [newReflection, setNewReflection] = useState<string>("");
   const [newReflectionTags, setNewReflectionTags] = useState<string>("");
+  const [noteTitle, setNoteTitle] = useState<string>("");
+  const [noteLesson, setNoteLesson] = useState<string>("");
+  const [noteActionStep, setNoteActionStep] = useState<string>("");
+  const [noteDua, setNoteDua] = useState<string>("");
+  const [noteColor, setNoteColor] = useState<string>("bg-emerald-500/10");
+  const [isNotePinned, setIsNotePinned] = useState<boolean>(false);
+  const [isNotePrivate, setIsNotePrivate] = useState<boolean>(true);
   const [isSubmittingReflection, setIsSubmittingReflection] = useState<boolean>(false);
 
   // Bookmarked check for active verse
@@ -255,12 +272,9 @@ export default function QuranReader({
     if (!currentUser || !activeVerse) return;
     try {
       const surahId = activeVerse.surahId || selectedSurah;
-      const res = await fetch(`/api/notes?userId=${encodeURIComponent(currentUser.id)}&surahId=${surahId}`);
-      if (res.ok) {
-        const notes = await res.json();
-        const filtered = notes.filter((n: any) => n.verseNumber === activeVerse.numberInSurah);
-        setReflections(filtered);
-      }
+      const notes = await getUserNotes(currentUser.id, surahId);
+      const filtered = notes.filter((n) => n.verseNumber === activeVerse.numberInSurah);
+      setReflections(filtered);
     } catch (err) {
       console.error(err);
     }
@@ -271,14 +285,11 @@ export default function QuranReader({
     if (!currentUser || !activeVerse) return;
     try {
       const surahId = activeVerse.surahId || selectedSurah;
-      const res = await fetch(`/api/bookmarks?userId=${encodeURIComponent(currentUser.id)}`);
-      if (res.ok) {
-        const bookmarks = await res.json();
-        const found = bookmarks.some(
-          (b: any) => b.surahId === surahId && b.verseNumber === activeVerse.numberInSurah
-        );
-        setIsBookmarked(found);
-      }
+      const bookmarks = await getUserBookmarks(currentUser.id);
+      const found = bookmarks.some(
+        (b) => b.surahId === surahId && b.verseNumber === activeVerse.numberInSurah
+      );
+      setIsBookmarked(found);
     } catch (err) {}
   };
 
@@ -291,26 +302,21 @@ export default function QuranReader({
     try {
       const surahId = ayah.surahId || selectedSurah;
       const surahName = SURAH_LIST[surahId - 1]?.name || "القرآن";
-      const res = await fetch("/api/progress", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: currentUser.id,
-          lastSurahId: surahId,
-          lastSurahName: surahName,
-          lastVerseNumber: ayah.numberInSurah
-        })
+      
+      await saveReadingProgress(currentUser.id, {
+        userId: currentUser.id,
+        lastSurahId: surahId,
+        lastSurahName: surahName,
+        lastVerseNumber: ayah.numberInSurah
       });
 
-      if (res.ok) {
-        localStorage.setItem(`last_read_${currentUser.id}`, JSON.stringify({
-          surahId,
-          verseNum: ayah.numberInSurah,
-          surahName
-        }));
-        onShowToast(`تم حفظ فاصل القراءة عند سورة ${surahName} آية ${ayah.numberInSurah}`, "success");
-        onRefreshStats();
-      }
+      localStorage.setItem(`last_read_${currentUser.id}`, JSON.stringify({
+        surahId,
+        verseNum: ayah.numberInSurah,
+        surahName
+      }));
+      onShowToast(`تم حفظ فاصل القراءة عند سورة ${surahName} آية ${ayah.numberInSurah}`, "success");
+      onRefreshStats();
     } catch (err) {
       console.error(err);
       onShowToast("فشل حفظ علامة المتابعة", "error");
@@ -323,29 +329,28 @@ export default function QuranReader({
     try {
       const surahId = activeVerse.surahId || selectedSurah;
       const surahName = SURAH_LIST[surahId - 1]?.name || "";
-      const res = await fetch("/api/bookmarks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      
+      const bookmarks = await getUserBookmarks(currentUser.id);
+      const existing = bookmarks.find(
+        (b) => b.surahId === surahId && b.verseNumber === activeVerse.numberInSurah
+      );
+
+      if (existing) {
+        await deleteBookmark(currentUser.id, existing.id);
+        setIsBookmarked(false);
+        onShowToast("تم إزالة الآية من المفضلة", "info");
+      } else {
+        await createBookmark(currentUser.id, {
           userId: currentUser.id,
           surahId,
           surahName,
           verseNumber: activeVerse.numberInSurah,
           note: "تم التثبيت من المصحف الشريف"
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.removed) {
-          setIsBookmarked(false);
-          onShowToast("تم إزالة الآية من المفضلة", "info");
-        } else {
-          setIsBookmarked(true);
-          onShowToast("تم حفظ الآية في المفضلة!", "success");
-        }
-        onRefreshStats();
+        });
+        setIsBookmarked(true);
+        onShowToast("تم حفظ الآية في المفضلة!", "success");
       }
+      onRefreshStats();
     } catch (err) {
       console.error(err);
     }
@@ -366,26 +371,37 @@ export default function QuranReader({
         .map((t) => t.trim())
         .filter((t) => t.length > 0);
 
-      const res = await fetch("/api/notes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: currentUser.id,
-          surahId,
-          surahName,
-          verseNumber: activeVerse.numberInSurah,
-          reflectionText: newReflection,
-          tags: tagsArray
-        })
+      await createNote(currentUser.id, {
+        userId: currentUser.id,
+        surahId,
+        surahName,
+        verseNumber: activeVerse.numberInSurah,
+        verseKey: `${surahId}:${activeVerse.numberInSurah}`,
+        verseText: activeVerse.text,
+        title: noteTitle,
+        reflectionText: newReflection,
+        lesson: noteLesson,
+        actionStep: noteActionStep,
+        dua: noteDua,
+        color: noteColor,
+        pinned: isNotePinned,
+        isPrivate: isNotePrivate,
+        isFavorite: false,
+        tags: tagsArray
       });
 
-      if (res.ok) {
-        setNewReflection("");
-        setNewReflectionTags("");
-        onShowToast("تم تسجيل خاطرتك وتدبرك للآية الكريمة بنجاح!", "success");
-        fetchVerseReflections();
-        onRefreshStats();
-      }
+      setNewReflection("");
+      setNewReflectionTags("");
+      setNoteTitle("");
+      setNoteLesson("");
+      setNoteActionStep("");
+      setNoteDua("");
+      setNoteColor("bg-emerald-500/10");
+      setIsNotePinned(false);
+      setIsNotePrivate(true);
+      onShowToast("تم حفظ تدبرك بنجاح", "success");
+      fetchVerseReflections();
+      onRefreshStats();
     } catch (err) {
       console.error(err);
       onShowToast("خطأ أثناء تدوين التدبر", "error");
@@ -407,25 +423,19 @@ export default function QuranReader({
     try {
       const surahId = activeVerse.surahId || selectedSurah;
       const surahName = SURAH_LIST[surahId - 1]?.name || "";
-      const res = await fetch("/api/memorization", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: currentUser.id,
-          title: memoPlanTitle,
-          surahId,
-          surahName,
-          startVerse: activeVerse.numberInSurah,
-          endVerse: memoEndVerse,
-          targetDate: memoTargetDate
-        })
+      await createMemorizationPlan(currentUser.id, {
+        userId: currentUser.id,
+        title: memoPlanTitle,
+        surahId,
+        surahName,
+        startVerse: activeVerse.numberInSurah,
+        endVerse: memoEndVerse,
+        targetDate: memoTargetDate
       });
 
-      if (res.ok) {
-        onShowToast("تم إنشاء خطة الحفظ والتكرار بنجاح! 🌟", "success");
-        onRefreshStats();
-        setDetailTab("tafsir");
-      }
+      onShowToast("تم إنشاء خطة الحفظ والتكرار بنجاح! 🌟", "success");
+      onRefreshStats();
+      setDetailTab("tafsir");
     } catch (err) {
       console.error(err);
       onShowToast("فشل إنشاء الخطة", "error");
@@ -524,7 +534,7 @@ export default function QuranReader({
   const handleShareVerse = (ayah: any) => {
     const surahId = ayah.surahId || selectedSurah;
     const surahName = SURAH_LIST[surahId - 1]?.name || "";
-    const textToCopy = `"${ayah.text}" [سورة ${surahName} : آية ${ayah.numberInSurah}] - عبر تطبيق أثر آية لتدبر القرآن العظيم`;
+    const textToCopy = `"${ayah.text}" [سورة ${surahName} : آية ${ayah.numberInSurah}] - عبر تطبيق أثر آية لتدبر القرآن الكريم`;
     
     navigator.clipboard.writeText(textToCopy)
       .then(() => onShowToast("تم نسخ نص الآية الكريمة وتنسيقها لمشاركتها!", "success"))
@@ -593,13 +603,13 @@ export default function QuranReader({
             <div className="flex border rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 text-xs">
               <button
                 onClick={() => setSelectionType("surah")}
-                className={`px-3 py-1 font-bold rounded-md transition ${selectionType === "surah" ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs" : "text-slate-500 hover:text-slate-700"}`}
+                className={`px-3 py-1 font-bold rounded-md transition ${selectionType === "surah" ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
               >
                 بالسورة
               </button>
               <button
                 onClick={() => setSelectionType("page")}
-                className={`px-3 py-1 font-bold rounded-md transition ${selectionType === "page" ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs" : "text-slate-500 hover:text-slate-700"}`}
+                className={`px-3 py-1 font-bold rounded-md transition ${selectionType === "page" ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
               >
                 بالصفحة
               </button>
@@ -619,7 +629,7 @@ export default function QuranReader({
                     setSelectedSurah(Number(e.target.value));
                     setSelectedVerse(1);
                   }}
-                  className="px-2.5 py-1.5 bg-white dark:bg-slate-800 border rounded-lg text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer max-w-[120px]"
+                  className="px-2.5 py-1.5 bg-white dark:bg-slate-800 border rounded-lg text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer max-w-[120px]"
                 >
                   {SURAH_LIST.map((s) => (
                     <option key={s.id} value={s.id}>
@@ -636,7 +646,7 @@ export default function QuranReader({
               <select
                 value={selectedPage}
                 onChange={(e) => handlePageChange(Number(e.target.value))}
-                className="px-2.5 py-1.5 bg-white dark:bg-slate-800 border rounded-lg text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer"
+                className="px-2.5 py-1.5 bg-white dark:bg-slate-800 border rounded-lg text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer"
               >
                 {Array.from({ length: 604 }, (_, i) => i + 1).map((p) => (
                   <option key={p} value={p}>
@@ -652,7 +662,7 @@ export default function QuranReader({
               <select
                 value={selectedJuz}
                 onChange={(e) => handleJuzChange(Number(e.target.value))}
-                className="px-2.5 py-1.5 bg-white dark:bg-slate-800 border rounded-lg text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer"
+                className="px-2.5 py-1.5 bg-white dark:bg-slate-800 border rounded-lg text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer"
               >
                 {JUZ_LIST.map((j) => (
                   <option key={j.id} value={j.id}>
@@ -725,7 +735,7 @@ export default function QuranReader({
                   <div className="grid grid-cols-3 gap-1">
                     <button
                       onClick={() => setReaderTheme("white")}
-                      className={`py-1.5 text-xs font-bold rounded-lg border cursor-pointer ${readerTheme === "white" ? "border-emerald-500 bg-slate-50 text-emerald-600" : "bg-white text-slate-800"}`}
+                      className={`py-1.5 text-xs font-bold rounded-lg border cursor-pointer ${readerTheme === "white" ? "border-emerald-500 bg-slate-50 text-emerald-600" : "bg-white text-slate-900"}`}
                     >
                       أبيض
                     </button>
@@ -775,7 +785,7 @@ export default function QuranReader({
             <div className="flex border rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 text-xs w-full sm:w-auto mt-2 sm:mt-0">
               <button
                 onClick={() => setReaderMode("mushaf")}
-                className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 font-bold rounded-md transition ${readerMode === "mushaf" ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs" : "text-slate-500 hover:text-slate-700"}`}
+                className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 font-bold rounded-md transition ${readerMode === "mushaf" ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
                 title="وضع المصحف (متواصل)"
               >
                 <BookOpen className="h-4 w-4" />
@@ -783,7 +793,7 @@ export default function QuranReader({
               </button>
               <button
                 onClick={() => setReaderMode("verse")}
-                className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 font-bold rounded-md transition ${readerMode === "verse" ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs" : "text-slate-500 hover:text-slate-700"}`}
+                className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 font-bold rounded-md transition ${readerMode === "verse" ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
                 title="وضع الآيات (قائمة مجزأة)"
               >
                 <List className="h-4 w-4" />
@@ -791,7 +801,7 @@ export default function QuranReader({
               </button>
               <button
                 onClick={() => setReaderMode("memorize")}
-                className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 font-bold rounded-md transition ${readerMode === "memorize" ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs" : "text-slate-500 hover:text-slate-700"}`}
+                className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 font-bold rounded-md transition ${readerMode === "memorize" ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
                 title="وضع التسميع والحفظ (إخفاء الكلمات)"
               >
                 <Award className="h-4 w-4" />
@@ -850,7 +860,7 @@ export default function QuranReader({
                 {/* Exit Focus Mode Button */}
                 <button
                   onClick={() => setFocusMode(false)}
-                  className="px-3 py-1.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                  className="px-3 py-1.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer"
                 >
                   <Minimize2 className="h-3.5 w-3.5" />
                   <span>إنهاء التركيز</span>
@@ -901,7 +911,7 @@ export default function QuranReader({
 
               {/* Bismillah Banner if not Tawbah and Fatiha */}
               {selectionType === "surah" && selectedSurah !== 1 && selectedSurah !== 9 && (
-                <div className="text-3xl sm:text-4xl font-serif text-slate-800 dark:text-slate-100 tracking-wide font-black py-4 block select-none drop-shadow-sm leading-relaxed max-w-xl mx-auto">
+                <div className="text-3xl sm:text-4xl font-serif text-slate-900 dark:text-slate-100 tracking-wide font-black py-4 block select-none drop-shadow-sm leading-relaxed max-w-xl mx-auto">
                   بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
                 </div>
               )}
@@ -938,7 +948,7 @@ export default function QuranReader({
                         className={`font-quran cursor-pointer rounded-xl px-2 py-1 inline-block transition-all duration-200 ${
                           isSelected 
                             ? "bg-emerald-500/20 dark:bg-emerald-500/35 text-emerald-800 dark:text-emerald-200 font-bold scale-102 ring-2 ring-emerald-500/30" 
-                            : "hover:bg-emerald-500/10 text-slate-800 dark:text-slate-100"
+                            : "hover:bg-emerald-500/10 text-slate-900 dark:text-slate-100"
                         }`}
                       >
                         {getCleanAyahText(ayah)}
@@ -1004,14 +1014,14 @@ export default function QuranReader({
                               }}
                               className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 hover:bg-emerald-600 hover:text-white border font-bold text-[10px] rounded-lg transition cursor-pointer"
                             >
-                              التفسير والخواطر
+                              التفسير وتدبري
                             </button>
                           </div>
                         </div>
 
                         {/* Verse Uthmani Text */}
                         <p 
-                          className="font-quran text-right select-all font-semibold leading-relaxed text-slate-800 dark:text-slate-100 mb-1"
+                          className="font-quran text-right select-all font-semibold leading-relaxed text-slate-900 dark:text-slate-100 mb-1"
                           style={{ fontSize: `${fontSize}px` }}
                         >
                           {ayah.text}
@@ -1060,7 +1070,7 @@ export default function QuranReader({
                                 onClick={() => handleToggleWordReveal(wordKey)}
                                 className={`inline-block mx-0.5 px-0.5 rounded cursor-pointer transition-all duration-200 select-none ${
                                   isRevealed 
-                                    ? "text-slate-800 dark:text-slate-100 font-bold" 
+                                    ? "text-slate-900 dark:text-slate-100 font-bold" 
                                     : "bg-slate-200 dark:bg-slate-800 text-transparent hover:bg-emerald-100 dark:hover:bg-emerald-950/40 select-none filter blur-[3px]"
                                 }`}
                               >
@@ -1159,14 +1169,20 @@ export default function QuranReader({
 
         </div>
 
-        {/* 3. RIGHT SIDE PANEL: VERSE DETAILS & ACTIVE ACTIONS */}
+        {/* 3. VERSE DETAILS PANEL (Side drawer on desktop, bottom sheet on mobile) */}
         {isDetailsOpen && activeVerse && (
-          <div className="w-full lg:w-96 border-t lg:border-t-0 lg:border-r bg-white dark:bg-slate-900 flex flex-col max-h-[700px] z-20">
+          <div className="fixed inset-0 z-50 flex flex-col lg:flex-row justify-end" dir="rtl">
+            <div 
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" 
+              onClick={() => setIsDetailsOpen(false)} 
+            />
+            <div className="w-full h-[85vh] mt-auto lg:mt-0 lg:h-full lg:w-96 bg-white dark:bg-slate-900 shadow-2xl flex flex-col z-10 rounded-t-3xl lg:rounded-none relative transform transition-transform border-t lg:border-t-0 lg:border-r border-slate-200 dark:border-slate-800 animate-fade-in lg:animate-slide-in-right">
+
             
             {/* Header: active verse label & close button */}
             <div className="p-3 border-b flex justify-between items-center bg-slate-50 dark:bg-slate-900/50">
               <div>
-                <h4 className="text-sm font-black text-slate-800 dark:text-slate-200">
+                <h4 className="text-sm font-black text-slate-900 dark:text-slate-200">
                   خيارات الآية الكريمة
                 </h4>
                 <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/10 px-1.5 py-0.5 rounded-md mt-0.5 inline-block">
@@ -1272,7 +1288,7 @@ export default function QuranReader({
                       </div>
                     ) : (
                       <div>
-                        <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed font-serif text-justify font-semibold">
+                        <p className="text-xs text-slate-800 dark:text-slate-200 leading-relaxed font-serif text-justify font-semibold">
                           {tafsirText}
                         </p>
                         <span className="block text-[8px] text-slate-400 font-bold text-left mt-3">
@@ -1316,29 +1332,87 @@ export default function QuranReader({
                 <div className="space-y-4">
                   
                   {/* Submitting form */}
-                  <form onSubmit={handleSubmitReflection} className="space-y-2.5">
-                    <label className="text-xs font-black text-slate-400 block">سجل تدبرك أو فائدتك الإيمانية للآية:</label>
+                  <form onSubmit={handleSubmitReflection} className="space-y-3">
+                    <div className="bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-500 text-[10px] p-2 rounded-lg font-bold">
+                      هذه مساحة للتدبر الشخصي، وليست تفسيرًا شرعيًا للآية.
+                    </div>
+                    
+                    <input
+                      type="text"
+                      value={noteTitle}
+                      onChange={(e) => setNoteTitle(e.target.value)}
+                      placeholder="عنوان التدبر"
+                      className="w-full p-2 bg-slate-50 dark:bg-slate-850 border rounded-lg text-xs font-bold text-slate-800 dark:text-slate-200"
+                    />
+                    
+                    <textarea
+                      value={noteLesson}
+                      onChange={(e) => setNoteLesson(e.target.value)}
+                      placeholder="ماذا تعلمت من الآية؟"
+                      rows={2}
+                      className="w-full p-2 bg-slate-50 dark:bg-slate-850 border rounded-lg text-xs font-bold text-slate-800 dark:text-slate-200"
+                    />
+                    
                     <textarea
                       value={newReflection}
                       onChange={(e) => setNewReflection(e.target.value)}
-                      placeholder="اكتب تأملاتك وخواطرك هنا... (ستبقى خاصة بك تلقائياً)"
-                      rows={3}
-                      className="w-full p-2.5 bg-slate-50 dark:bg-slate-850 border rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      placeholder="ما المعنى الذي أثّر فيك؟"
+                      rows={2}
+                      className="w-full p-2 bg-slate-50 dark:bg-slate-850 border rounded-lg text-xs font-bold text-slate-800 dark:text-slate-200"
+                      required
                     />
+
+                    <textarea
+                      value={noteActionStep}
+                      onChange={(e) => setNoteActionStep(e.target.value)}
+                      placeholder="كيف سأطبق ذلك؟ (خطوة عملية)"
+                      rows={2}
+                      className="w-full p-2 bg-slate-50 dark:bg-slate-850 border rounded-lg text-xs font-bold text-slate-800 dark:text-slate-200"
+                    />
+
+                    <textarea
+                      value={noteDua}
+                      onChange={(e) => setNoteDua(e.target.value)}
+                      placeholder="دعاء أو خاطرة"
+                      rows={2}
+                      className="w-full p-2 bg-slate-50 dark:bg-slate-850 border rounded-lg text-xs font-bold text-slate-800 dark:text-slate-200"
+                    />
+                    
                     <input
                       type="text"
                       value={newReflectionTags}
                       onChange={(e) => setNewReflectionTags(e.target.value)}
-                      placeholder="وسوم (تفكر، دعاء، أخلاق...)"
-                      className="w-full p-2 bg-slate-50 dark:bg-slate-850 border rounded-lg text-[10px] font-bold text-slate-700 dark:text-slate-200 focus:outline-none"
+                      placeholder="الوسوم (تفريق بفاصلة)"
+                      className="w-full p-2 bg-slate-50 dark:bg-slate-850 border rounded-lg text-[10px] font-bold text-slate-800 dark:text-slate-200"
                     />
-                    <button
-                      type="submit"
-                      disabled={isSubmittingReflection}
-                      className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition"
-                    >
-                      {isSubmittingReflection ? "جاري الحفظ..." : "حفظ الخاطرة بملف التدبر"}
-                    </button>
+
+                    <div className="flex gap-2">
+                      <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer">
+                        <input type="checkbox" checked={isNotePinned} onChange={(e) => setIsNotePinned(e.target.checked)} className="rounded" />
+                        تثبيت النوت
+                      </label>
+                      <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer">
+                        <input type="checkbox" checked={isNotePrivate} onChange={(e) => setIsNotePrivate(e.target.checked)} className="rounded" />
+                        خاصة بي فقط
+                      </label>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="submit"
+                        disabled={isSubmittingReflection}
+                        className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition"
+                      >
+                        {isSubmittingReflection ? "جاري الحفظ..." : "حفظ التدبر"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsDetailsOpen(false)}
+                        className="px-4 py-2 bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-300 font-bold text-xs rounded-lg transition"
+                      >
+                        إلغاء
+                      </button>
+                    </div>
                   </form>
 
                   {/* History List */}
@@ -1349,7 +1423,7 @@ export default function QuranReader({
                     ) : (
                       reflections.map((n) => (
                         <div key={n.id} className="bg-slate-50 dark:bg-slate-950/20 border p-2.5 rounded-lg text-xs space-y-1">
-                          <p className="font-bold text-slate-700 dark:text-slate-200 leading-relaxed">{n.reflectionText}</p>
+                          <p className="font-bold text-slate-800 dark:text-slate-200 leading-relaxed">{n.reflectionText}</p>
                           {n.tags && n.tags.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1">
                               {n.tags.map((t) => (
@@ -1427,6 +1501,7 @@ export default function QuranReader({
 
             </div>
           </div>
+          </div>
         )}
 
       </div>
@@ -1443,7 +1518,7 @@ export default function QuranReader({
             </button>
 
             <div className="border-b pb-3 mb-4 text-right">
-              <h3 className="text-base font-black text-slate-800 dark:text-slate-200">فهرس سور القرآن العظيم</h3>
+              <h3 className="text-base font-black text-slate-900 dark:text-slate-200">فهرس سور القرآن الكريم</h3>
               <p className="text-[10px] text-slate-400 font-bold">١١٤ سورة مع الترتيب والبيانات المعتمدة</p>
             </div>
 
@@ -1499,7 +1574,7 @@ export default function QuranReader({
             </button>
 
             <div className="border-b pb-3 mb-4">
-              <h3 className="text-base font-black text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <h3 className="text-base font-black text-slate-900 dark:text-slate-200 flex items-center gap-1.5">
                 <Search className="h-5 w-5 text-emerald-600" />
                 البحث المطور في آيات القرآن الكريم
               </h3>
@@ -1513,7 +1588,7 @@ export default function QuranReader({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="اكتب كلمة أو آية للبحث (مثال: الرحمن، الجبال)..."
-                className="flex-1 p-2.5 bg-slate-50 dark:bg-slate-850 border rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                className="flex-1 p-2.5 bg-slate-50 dark:bg-slate-850 border rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
               />
               <button
                 type="submit"
@@ -1550,7 +1625,7 @@ export default function QuranReader({
                       </span>
                       <span className="text-slate-400 font-bold">الصفحة {result.page}</span>
                     </div>
-                    <p className="font-serif font-black font-quran text-slate-800 dark:text-slate-100 leading-loose text-sm sm:text-base">
+                    <p className="font-serif font-black font-quran text-black dark:text-slate-100 leading-loose text-sm sm:text-base">
                       {result.text}
                     </p>
                   </div>
