@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "athar-ayah-default"
-  }
+    "default": "athar-ayah",
+    "aa": "athar-ayah"
+  },
+  "targets": {},
+  "etags": {}
 }
