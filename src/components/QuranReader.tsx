@@ -85,9 +85,7 @@ export default function QuranReader({
         
         lastSyncTime.current = now;
         activeVersesTracker.current.clear();
-        if (!isUnmount) {
-          onRefreshStats();
-        }
+        onRefreshStats();
       }
     };
 
@@ -95,7 +93,10 @@ export default function QuranReader({
     
     return () => {
       clearInterval(interval);
-      syncStats(true);
+      // Use a timeout to ensure the final stats sync completes before the component fully unmounts
+      setTimeout(() => {
+        syncStats(true);
+      }, 100);
     };
   }, [currentUser, selectedSurah, onRefreshStats]);
 

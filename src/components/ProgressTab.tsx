@@ -11,9 +11,10 @@ import { SURAH_LIST as SURAHS } from "../utils/quranUtils";
 interface ProgressTabProps {
   currentUser: User | null;
   onRefreshStats: () => void;
+  onNavigateToReader: (surahId?: number, verseNum?: number) => void;
 }
 
-export default function ProgressTab({ currentUser, onRefreshStats }: ProgressTabProps) {
+export default function ProgressTab({ currentUser, onRefreshStats, onNavigateToReader }: ProgressTabProps) {
   const [progress, setProgress] = useState<ReadingProgress | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   
@@ -131,6 +132,11 @@ export default function ProgressTab({ currentUser, onRefreshStats }: ProgressTab
 
   return (
     <div className="space-y-6">
+      <button onClick={() => onNavigateToReader(progress?.lastSurahId, progress?.lastVerseNumber)} className="w-full p-4 bg-emerald-50 dark:bg-emerald-900/30 rounded-2xl text-right flex items-center justify-between group">
+        <span className="font-bold text-emerald-700 dark:text-emerald-400">تابع القراءة من آخر موضع: {progress?.lastSurahName} آية {progress?.lastVerseNumber}</span>
+        <ChevronLeft className="h-5 w-5 text-emerald-500 group-hover:translate-x-[-4px] transition-transform" />
+      </button>
+
       {/* Header and Summary stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Current status card */}
