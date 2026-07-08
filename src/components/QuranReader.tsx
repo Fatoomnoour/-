@@ -1498,6 +1498,11 @@ export default function QuranReader({
                     ) : (
                       reflections.map((n) => (
                         <div key={n.id} className="bg-slate-50 dark:bg-slate-950/20 border p-2.5 rounded-lg text-xs space-y-1">
+                          {n.verseText && (
+                            <blockquote className="border-r-2 border-emerald-500 pr-2 mb-2 text-slate-500 dark:text-slate-400 font-serif">
+                              "{n.verseText}"
+                            </blockquote>
+                          )}
                           <p className="font-bold text-slate-800 dark:text-slate-200 leading-relaxed">{n.reflectionText}</p>
                           {n.tags && n.tags.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1">
@@ -1542,12 +1547,41 @@ export default function QuranReader({
                       </div>
                       <div>
                         <label className="text-[10px] font-bold text-slate-400 block mb-1">إلى آية:</label>
-                        <input
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                        <input 
                           type="number"
                           min={activeVerse.numberInSurah}
                           max={SURAH_VERSE_COUNTS[(activeVerse.surahId || selectedSurah) - 1]}
-                          value={memoEndVerse}
-                          onChange={(e) => setMemoEndVerse(Number(e.target.value))}
+                          value={memoEndVerse || ''}
+                          onChange={(e) => {
+                            const max = SURAH_VERSE_COUNTS[(activeVerse.surahId || selectedSurah) - 1];
+                            const val = e.target.value === '' ? '' : Number(e.target.value);
+                            if (val === '' || (val >= activeVerse.numberInSurah && val <= max)) {
+                                setMemoEndVerse(val);
+                            }
+                          }}
                           className="w-full p-2 bg-slate-50 dark:bg-slate-850 border rounded-lg text-xs font-bold text-center"
                         />
                       </div>

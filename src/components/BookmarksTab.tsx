@@ -4,8 +4,9 @@ import {
   ChevronRight, Calendar, BookmarkCheck, FileText, Sparkles 
 } from "lucide-react";
 import { Bookmark as BookmarkType, QuranNote, User } from "../types";
-import { SURAHS } from "../data/surahs";
 import { VERIFIED_VERSES } from "../data/verses";
+import { SURAH_LIST as SURAHS } from "../utils/quranUtils";
+import { formatFirestoreDate } from "../utils/dateUtils";
 import { getUserBookmarks, getUserNotes, createBookmark, deleteBookmark, updateNote } from "../services/firestoreService";
 
 interface BookmarksTabProps {
@@ -21,7 +22,7 @@ export default function BookmarksTab({ currentUser, onRefreshStats }: BookmarksT
   // New Bookmark state
   const [isAdding, setIsAdding] = useState(false);
   const [formSurahId, setFormSurahId] = useState(1);
-  const [formVerseNumber, setFormVerseNumber] = useState(1);
+  const [formVerseNumber, setFormVerseNumber] = useState<number | string>(1);
   const [formNote, setFormNote] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -49,11 +50,11 @@ export default function BookmarksTab({ currentUser, onRefreshStats }: BookmarksT
 
   const selectedSurahMeta = SURAHS.find(s => s.id === formSurahId);
 
-  useEffect(() => {
-    if (selectedSurahMeta && formVerseNumber > selectedSurahMeta.versesCount) {
-      setFormVerseNumber(1);
-    }
-  }, [formSurahId]);
+  // useEffect(() => {
+  //   if (selectedSurahMeta && formVerseNumber > selectedSurahMeta.verses) {
+  //     setFormVerseNumber(1);
+  //   }
+  // }, [formSurahId]);
 
   const handleAddBookmark = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,7 +69,7 @@ export default function BookmarksTab({ currentUser, onRefreshStats }: BookmarksT
         userId: currentUser.id,
         surahId: formSurahId,
         surahName,
-        verseNumber: formVerseNumber,
+        verseNumber: Number(formVerseNumber),
         note: formNote
       });
 
@@ -111,6 +112,11 @@ export default function BookmarksTab({ currentUser, onRefreshStats }: BookmarksT
   const getScriptureText = (surahId: number, verseNo: number, surahName: string) => {
     const matched = VERIFIED_VERSES.find(v => v.surahId === surahId && v.verseNumber === verseNo);
     return matched ? matched.text : `الآية رقم ${verseNo} من سورة ${surahName}`;
+  };
+
+  const getAyahTextForNote = (note: QuranNote) => {
+    const verified = VERIFIED_VERSES.find(v => v.surahId === note.surahId && v.verseNumber === note.verseNumber);
+    return note.verseText || (verified ? verified.text : "نص الآية غير متوفر");
   };
 
   return (
@@ -166,23 +172,36 @@ export default function BookmarksTab({ currentUser, onRefreshStats }: BookmarksT
                 id="bookmark-surah-select"
               >
                 {SURAHS.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.id}. {s.name} ({s.versesCount} آية)
+                  <option key={s.id} value={s.id} >
+                    {s.id}. {s.name} ({s.verses} آية)
                   </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1">
-                رقم الآية (الأقصى {selectedSurahMeta?.versesCount || 286})
+              <label className="block text-xs font-semibold text-slate-500 mb-1" >
+                رقم الآية (الأقصى {selectedSurahMeta?.verses || 7})
               </label>
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
                 min={1}
-                max={selectedSurahMeta?.versesCount || 286}
+                max={selectedSurahMeta?.verses || 7}
                 value={formVerseNumber}
-                onChange={(e) => setFormVerseNumber(parseInt(e.target.value) || 1)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '' || /^[0-9]+$/.test(val)) {
+                    setFormVerseNumber(val);
+                  }
+                }}
+                onBlur={(e) => {
+                  const maxVerse = selectedSurahMeta?.verses || 7;
+                  let val = parseInt(e.target.value);
+                  if (isNaN(val) || val < 1) val = 1;
+                  if (val > maxVerse) val = maxVerse;
+                  setFormVerseNumber(val);
+                }}
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 id="bookmark-verse-input"
               />
@@ -251,13 +270,11 @@ export default function BookmarksTab({ currentUser, onRefreshStats }: BookmarksT
                     className="p-3 bg-slate-50 dark:bg-slate-950/50 border border-slate-100 dark:border-slate-800 rounded-xl flex items-center justify-between group hover:border-emerald-200 hover:bg-emerald-50/5 transition duration-150"
                   >
                     <div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 text-xs">
                         <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">
                           {b.surahName} ({b.verseNumber})
                         </span>
-                        <span className="text-[10px] text-slate-400">
-                          {new Date(b.createdAt).toLocaleDateString("ar-SA")}
-                        </span>
+                        <span className="text-[10px] text-slate-400">{formatFirestoreDate(b.createdAt)}</span>
                       </div>
                       {b.note ? (
                         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 whitespace-pre-wrap font-medium">
@@ -323,7 +340,7 @@ export default function BookmarksTab({ currentUser, onRefreshStats }: BookmarksT
                     {/* Classic Scripture */}
                     <div className="bg-slate-50 dark:bg-slate-950 rounded-lg p-2.5 text-center mb-3 text-slate-800 dark:text-slate-200">
                       <p className="quran-font text-md font-bold leading-relaxed text-emerald-800 dark:text-emerald-400">
-                        {note.verseText}
+                        {note.verseText || "نص الآية غير متوفر"}
                       </p>
                     </div>
 

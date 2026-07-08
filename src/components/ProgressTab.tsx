@@ -4,8 +4,9 @@ import {
   BookMarked, Compass, Calendar, Sparkles, Award 
 } from "lucide-react";
 import { ReadingProgress, User } from "../types";
-import { SURAHS } from "../data/surahs";
 import { getReadingProgress, saveReadingProgress } from "../services/firestoreService";
+import { formatFirestoreDate } from "../utils/dateUtils";
+import { SURAH_LIST as SURAHS } from "../utils/quranUtils";
 
 interface ProgressTabProps {
   currentUser: User | null;
@@ -49,7 +50,7 @@ export default function ProgressTab({ currentUser, onRefreshStats }: ProgressTab
 
   // Auto-adjust verse limits when surah changes
   useEffect(() => {
-    if (activeSurahMeta && verseNumber > activeSurahMeta.versesCount) {
+    if (activeSurahMeta && verseNumber > activeSurahMeta.verses) {
       setVerseNumber(1);
     }
   }, [selectedSurahId]);
@@ -120,12 +121,12 @@ export default function ProgressTab({ currentUser, onRefreshStats }: ProgressTab
 
   // Calculations for pretty cards
   const totalQuranVerses = 6236;
-  const completedSurahsCount = progress?.completedSurahs.length || 0;
+  const completedSurahsCount = progress?.completedSurahs?.length || 0;
   const totalSurahsCount = 114;
   const surahProgressPercentage = Math.round((completedSurahsCount / totalSurahsCount) * 100);
 
   // Estimate remaining days to complete the Quran based on goal
-  const remainingVerses = totalQuranVerses - (progress ? (SURAHS.filter(s => progress.completedSurahs.includes(s.id)).reduce((acc, s) => acc + s.versesCount, 0)) : 0);
+  const remainingVerses = totalQuranVerses - (progress ? (SURAHS.filter(s => progress.completedSurahs.includes(s.id)).reduce((acc, s) => acc + s.verses, 0)) : 0);
   const estimatedDaysToComplete = progress ? Math.round(remainingVerses / progress.dailyGoalVerses) : 623;
 
   return (
@@ -146,7 +147,7 @@ export default function ProgressTab({ currentUser, onRefreshStats }: ProgressTab
           </div>
           
           <div className="mt-6 pt-3 border-t border-emerald-500/30 flex items-center justify-between text-xs text-emerald-100">
-            <span>تحديث: {progress ? new Date(progress.updatedAt).toLocaleDateString("ar-SA") : "اليوم"}</span>
+            <span>تحديث: {progress?.updatedAt ? formatFirestoreDate(progress.updatedAt) : "غير محدد"}</span>
             <BookMarked className="h-4.5 w-4.5 text-emerald-200" />
           </div>
         </div>
@@ -234,20 +235,20 @@ export default function ProgressTab({ currentUser, onRefreshStats }: ProgressTab
               >
                 {SURAHS.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.id}. {s.name} ({s.versesCount} آية)
+                    {s.id}. {s.name} ({s.verses} آية)
                   </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
-                وصلت للآية رقم (الحد الأقصى {activeSurahMeta?.versesCount || 286})
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1" >
+                وصلت للآية رقم (الحد الأقصى {activeSurahMeta?.verses || 286})
               </label>
               <input
                 type="number"
                 min={1}
-                max={activeSurahMeta?.versesCount || 286}
+                max={activeSurahMeta?.verses || 286}
                 value={verseNumber}
                 onChange={(e) => setVerseNumber(parseInt(e.target.value) || 1)}
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -320,8 +321,8 @@ export default function ProgressTab({ currentUser, onRefreshStats }: ProgressTab
                     <span className="font-bold text-sm block group-hover:translate-x-[-2px] transition-transform">
                       {s.name}
                     </span>
-                    <span className="block text-[10px] text-slate-400">
-                      {s.versesCount} آية
+                    <span className="block text-[10px] text-slate-400" >
+                      {s.verses} آية
                     </span>
                   </div>
                   <div>

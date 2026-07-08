@@ -4,8 +4,9 @@ import {
   TrendingUp, CheckCircle2, RefreshCw, Star, Trash, Sparkles
 } from "lucide-react";
 import { MemorizationPlan, User, RevisionSession } from "../types";
-import { SURAHS } from "../data/surahs";
 import SpacedRepetitionExplanation from "./SpacedRepetitionExplanation";
+import { formatFirestoreDate } from "../utils/dateUtils";
+import { SURAH_LIST as SURAHS } from "../utils/quranUtils";
 import { getUserMemorizationPlans, createMemorizationPlan, deleteMemorizationPlan, updateMemorizationPlan } from "../services/firestoreService";
 
 interface MemorizationTabProps {
@@ -21,9 +22,9 @@ export default function MemorizationTab({ currentUser, onRefreshStats, onShowToa
   // New Plan form state
   const [isAdding, setIsAdding] = useState(false);
   const [title, setTitle] = useState("");
-  const [selectedSurahId, setSelectedSurahId] = useState(78); // Default: An-Naba
-  const [startVerse, setStartVerse] = useState(1);
-  const [endVerse, setEndVerse] = useState(40);
+  const [selectedSurahId, setSelectedSurahId] = useState<number>(78); // Default: An-Naba
+  const [startVerse, setStartVerse] = useState<number | string>(1);
+  const [endVerse, setEndVerse] = useState<number | string>(SURAHS.find(s => s.id === 78)?.verses || 40);
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   
@@ -33,6 +34,13 @@ export default function MemorizationTab({ currentUser, onRefreshStats, onShowToa
   useEffect(() => {
     fetchPlans();
   }, [currentUser]);
+
+  // Update end verse when surah changes
+  useEffect(() => {
+    const selectedSurah = SURAHS.find(s => s.id === selectedSurahId);
+    setStartVerse(1);
+    setEndVerse(selectedSurah?.verses || 1);
+  }, [selectedSurahId]);
 
   const fetchPlans = async () => {
     if (!currentUser) return;
@@ -59,8 +67,8 @@ export default function MemorizationTab({ currentUser, onRefreshStats, onShowToa
         title,
         surahId: selectedSurahId,
         surahName,
-        startVerse,
-        endVerse,
+        startVerse: Number(startVerse),
+        endVerse: Number(endVerse),
         completed: false,
         intervalDays: 1,
         nextReviewDate: new Date().toISOString()
@@ -188,7 +196,7 @@ export default function MemorizationTab({ currentUser, onRefreshStats, onShowToa
       ) : (
         <div className="flex items-center justify-between pt-2">
           <div className="text-[10px] font-medium text-slate-400">
-            {plan.nextReviewDate ? `المراجعة: ${new Date(plan.nextReviewDate).toLocaleDateString("ar-SA")}` : "بانتظار المراجعة الأولى"}
+            {plan.nextReviewDate ? `المراجعة: ${formatFirestoreDate(plan.nextReviewDate)}` : "بانتظار المراجعة الأولى"}
           </div>
           <button 
             onClick={() => setReviewPlanId(plan.id)}
@@ -234,17 +242,57 @@ export default function MemorizationTab({ currentUser, onRefreshStats, onShowToa
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1.5">السورة</label>
-              <select value={selectedSurahId} onChange={e => setSelectedSurahId(Number(e.target.value))} className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold text-sm">
+              <select value={selectedSurahId} onChange={e => {
+                  const newSurahId = Number(e.target.value);
+                  setSelectedSurahId(newSurahId);
+                  const surahInfo = SURAHS.find(s => s.id === newSurahId);
+                  setEndVerse(surahInfo?.verses || 1);
+                  setStartVerse(1);
+              }} className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold text-sm">
                 {SURAHS.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1.5">من الآية</label>
-              <input type="number" min={1} value={startVerse} onChange={e => setStartVerse(Number(e.target.value))} className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold text-sm" />
+              <input type="text" inputMode="numeric" min={1} max={Number(endVerse) > 1 ? Number(endVerse) - 1 : 1} value={startVerse} 
+                onChange={e => {
+                  const val = e.target.value;
+                  if (val === '' || /^[0-9]+$/.test(val)) {
+                    setStartVerse(val);
+                  }
+                }}
+                onBlur={(e) => {
+                  let val = parseInt(e.target.value);
+                  if (isNaN(val) || val < 1) val = 1;
+                  if (val >= Number(endVerse)) val = Number(endVerse) > 1 ? Number(endVerse) - 1 : 1;
+                  setStartVerse(val);
+                }}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold text-sm" />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 mb-1.5">إلى الآية</label>
-              <input type="number" min={startVerse} value={endVerse} onChange={e => setEndVerse(Number(e.target.value))} className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold text-sm" />
+              <input type="text" inputMode="numeric" min={Number(startVerse)} max={SURAHS.find(s => s.id === selectedSurahId)?.verses || 1} value={endVerse} 
+                onChange={e => {
+                  const val = e.target.value;
+                  if (val === '' || /^[0-9]+$/.test(val)) {
+                    setEndVerse(val);
+                  }
+                }}
+                onBlur={(e) => {
+                  const maxVerse = SURAHS.find(s => s.id === selectedSurahId)?.verses || 1;
+                  let val = parseInt(e.target.value);
+                  if (isNaN(val)) {
+                    val = maxVerse;
+                  }
+                  if (val < Number(startVerse)) {
+                    val = Number(startVerse);
+                  }
+                  if (val > maxVerse) {
+                    val = maxVerse;
+                  }
+                  setEndVerse(val);
+                }}
+                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-bold text-sm" />
             </div>
           </div>
           <div className="flex justify-end gap-3">

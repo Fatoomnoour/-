@@ -4,8 +4,9 @@ import {
   HelpCircle, ChevronRight, Filter, AlertCircle 
 } from "lucide-react";
 import { QuranNote, User } from "../types";
-import { SURAHS } from "../data/surahs";
 import { VERIFIED_VERSES } from "../data/verses";
+import { SURAH_LIST as SURAHS } from "../utils/quranUtils";
+import { formatFirestoreDate } from "../utils/dateUtils";
 import { getUserNotes, deleteNote, updateNote, createNote } from "../services/firestoreService";
 
 interface NotesTabProps {
@@ -26,13 +27,14 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
   
   // Form fields
   const [formSurahId, setFormSurahId] = useState(2); // Default to Al-Baqarah
-  const [formVerseNumber, setFormVerseNumber] = useState(152);
+  const [formVerseNumber, setFormVerseNumber] = useState<number | string>(152);
   const [formReflection, setFormReflection] = useState("");
   const [formTagsString, setFormTagsString] = useState("");
   const [formPinned, setFormPinned] = useState(false);
   const [formFavorite, setFormFavorite] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [fetchedVerseTexts, setFetchedVerseTexts] = useState<Map<string, string>>(new Map());
 
   // Suggested tags
   const popularTags = ["طمأنينة", "صبر", "دعاء", "رحمة", "توكل", "عمل", "تفاؤل", "أمل", "توجيه"];
@@ -46,6 +48,33 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
     try {
       if (!currentUser) return;
       const data = await getUserNotes(currentUser.id, selectedSurahFilter ? Number(selectedSurahFilter) : undefined);
+
+      // Identify notes with missing verseText and collect unique surahIds
+      const notesWithMissingText = data.filter(n => !n.verseText && n.surahId && n.verseNumber);
+      const uniqueSurahIdsToFetch = new Set<number>();
+      notesWithMissingText.forEach(n => uniqueSurahIdsToFetch.add(n.surahId));
+
+      // Fetch missing surah data from API
+      const newFetchedVerseTexts = new Map<string, string>();
+      const fetchPromises = Array.from(uniqueSurahIdsToFetch).map(async (sId) => {
+        try {
+          const url = `https://api.alquran.cloud/v1/surah/${sId}/quran-uthmani`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const result = await res.json();
+            result.data.ayahs.forEach((ayah: any) => {
+              newFetchedVerseTexts.set(`${sId}:${ayah.numberInSurah}`, ayah.text);
+            });
+          } else {
+            console.error(`Failed to fetch surah ${sId} from API`);
+          }
+        } catch (err) {
+          console.error(`Error fetching surah ${sId}:`, err);
+        }
+      });
+      await Promise.all(fetchPromises);
+      setFetchedVerseTexts(newFetchedVerseTexts);
+
       
       // Filter locally for now
       let filtered = data;
@@ -74,8 +103,8 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
 
   // When Surah changes in form, reset verse number if it exceeds maximum
   useEffect(() => {
-    if (selectedSurahMeta) {
-      if (formVerseNumber > selectedSurahMeta.versesCount) {
+    if (selectedSurahMeta) { 
+      if (Number(formVerseNumber) > selectedSurahMeta.verses) {
         setFormVerseNumber(1);
       }
     }
@@ -83,7 +112,8 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
 
   // Autofill verse text if it matches a verified verse
   const getAutofilledVerseText = () => {
-    const verified = VERIFIED_VERSES.find(v => v.surahId === formSurahId && v.verseNumber === formVerseNumber);
+    const verseNum = Number(formVerseNumber);
+    const verified = VERIFIED_VERSES.find(v => v.surahId === formSurahId && v.verseNumber === verseNum);
     return verified ? verified.text : "";
   };
 
@@ -130,9 +160,10 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
 
     const payload = {
       userId: currentUser?.id || "kidscodinghub1512@gmail.com",
+      verseText: getAutofilledVerseText(),
       surahId: formSurahId,
       surahName,
-      verseNumber: formVerseNumber,
+      verseNumber: Number(formVerseNumber),
       reflectionText: formReflection,
       tags,
       pinned: formPinned,
@@ -199,6 +230,15 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
   // Get unique tags from all notes
   const allTags = Array.from(new Set(notes.flatMap(n => n.tags)));
 
+  const getAyahTextForNote = (note: QuranNote) => {
+    if (note.verseText) return note.verseText;
+    const verified = VERIFIED_VERSES.find(v => v.surahId === note.surahId && v.verseNumber === note.verseNumber);
+    if (verified) return verified.text;
+    const cacheKey = `${note.surahId}:${note.verseNumber}`;
+    if (fetchedVerseTexts.has(cacheKey)) return fetchedVerseTexts.get(cacheKey)!;
+    return "نص الآية غير متوفر";
+  };
+
   return (
     <div className="space-y-6">
       {/* Search and Action Bar */}
@@ -228,7 +268,7 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
               <option value="">كل السور</option>
               {SURAHS.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name} ({s.versesCount} آية)
+                  {s.name} ({s.verses} آية)
                 </option>
               ))}
             </select>
@@ -363,8 +403,8 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
                 {/* Verse Text (classical style) */}
                 <div className="bg-slate-50 dark:bg-slate-950/70 rounded-xl p-3.5 mb-4 border border-slate-100 dark:border-slate-800/80 text-center relative overflow-hidden">
                   <div className="absolute right-1 top-0 text-slate-200 dark:text-slate-800/40 text-4xl font-serif select-none pointer-events-none">﴿</div>
-                  <p className="quran-font text-lg text-emerald-800 dark:text-emerald-300 leading-loose font-bold inline px-4">
-                    {note.verseText}
+                  <p className="quran-font text-lg text-emerald-800 dark:text-emerald-300 leading-loose font-bold inline px-4 min-h-[2em] flex items-center justify-center">
+                    {getAyahTextForNote(note)}
                   </p>
                   <div className="absolute left-1 bottom-0 text-slate-200 dark:text-slate-800/40 text-4xl font-serif select-none pointer-events-none">﴾</div>
                 </div>
@@ -392,11 +432,7 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
 
                 {/* Timestamp */}
                 <span className="text-slate-400">
-                  {new Date(note.createdAt).toLocaleDateString("ar-SA", {
-                    year: "numeric",
-                    month: "long",
-                    day: "numeric"
-                  })}
+                  {formatFirestoreDate(note.createdAt)}
                 </span>
               </div>
             </div>
@@ -448,22 +484,35 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
                     >
                       {SURAHS.map((s) => (
                         <option key={s.id} value={s.id}>
-                          {s.id}. {s.name} ({s.versesCount} آية)
+                          {s.id}. {s.name} ({s.verses} آية)
                         </option>
                       ))}
                     </select>
                   </div>
 
                   <div>
-                    <label className="block text-xs text-slate-500 mb-1">
-                      رقم الآية (الحد الأقصى: {selectedSurahMeta?.versesCount || 286})
+                    <label className="block text-xs text-slate-500 mb-1" >
+                      رقم الآية (الحد الأقصى: {selectedSurahMeta?.verses || 286})
                     </label>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="numeric"
                       min={1}
-                      max={selectedSurahMeta?.versesCount || 286}
+                      max={selectedSurahMeta?.verses || 286}
                       value={formVerseNumber}
-                      onChange={(e) => setFormVerseNumber(parseInt(e.target.value) || 1)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || /^[0-9]+$/.test(val)) {
+                          setFormVerseNumber(val);
+                        }
+                      }}
+                      onBlur={(e) => {
+                        const maxVerse = selectedSurahMeta?.verses || 286;
+                        let val = parseInt(e.target.value);
+                        if (isNaN(val) || val < 1) val = 1;
+                        if (val > maxVerse) val = maxVerse;
+                        setFormVerseNumber(val);
+                      }}
                       className="w-full px-3 py-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm"
                       id="form-verse-input"
                     />
