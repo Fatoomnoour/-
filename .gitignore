@@ -1,4 +1,4 @@
-node_modules/
+﻿node_modules/
 build/
 dist/
 coverage/
@@ -26,4 +26,3 @@ backups/
 fix_*.cjs
 tracker.cjs
 update_stats.cjs
-assets/.aistudio/
