@@ -8,3 +8,14 @@ coverage/
 !.env.example
 .firebase/
 backups/
+
+# Local debug / generated artifacts
+dist/
+.firebase/
+backups/
+debug-*/
+fixed-progress/
+groups-*-fix/
+*-debug.zip
+*-fix.zip
+project-tree.txt
