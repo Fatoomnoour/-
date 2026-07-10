@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from "react";
 import { 
-  Settings, User as UserIcon, BookOpen, ShieldAlert, Check, Loader, Info, Bell, BellOff 
+  Settings, User as UserIcon, BookOpen, ShieldAlert, Check, Loader, Info, Bell, BellOff, RefreshCw, AlertTriangle
 } from "lucide-react";
 import { User, ReadingProgress } from "../types";
 import { requestNotificationPermission, scheduleLocalNotification } from "../utils/notifications";
-import { getReadingProgress, saveReadingProgress } from "../services/firestoreService";
+import { getReadingProgress, saveReadingProgress, resetUserJourney } from "../services/firestoreService";
 import { updateProfile } from "firebase/auth";
 import { auth } from "../lib/firebase";
 
 interface SettingsPageProps {
   currentUser: User | null;
   onUpdateUser: (updatedUser: User) => void;
+  onAccountReset: () => void;
   onShowToast: (msg: string, type: "success" | "error" | "info") => void;
   onRefreshStats: () => void;
 }
@@ -18,6 +19,7 @@ interface SettingsPageProps {
 export default function SettingsPage({
   currentUser,
   onUpdateUser,
+  onAccountReset,
   onShowToast,
   onRefreshStats
 }: SettingsPageProps) {
@@ -25,6 +27,10 @@ export default function SettingsPage({
   const [dailyGoal, setDailyGoal] = useState<number>(10);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(false);
+
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
     if (currentUser) {
@@ -95,6 +101,28 @@ export default function SettingsPage({
       setIsSaving(false);
     }
   };
+
+  const handleResetJourney = async () => {
+    if (!currentUser || resetConfirmText !== "بدء رحلة جديدة") {
+      onShowToast("النص المدخل غير مطابق للتأكيد.", "error");
+      return;
+    }
+
+    setIsResetting(true);
+    try {
+      await resetUserJourney(currentUser.id);
+      onShowToast("تم بدء رحلة جديدة بنجاح.", "success");
+      setIsResetModalOpen(false);
+      setResetConfirmText("");
+      onAccountReset(); // This will trigger a full data refresh in App.tsx
+    } catch (err: any) {
+      console.error("Error resetting journey:", err);
+      onShowToast(err.message || "تعذر بدء رحلة جديدة. حاولي مرة أخرى.", "error");
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
 
   return (
     <div className="max-w-2xl mx-auto bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 md:p-8 space-y-6 text-right font-sans" dir="rtl">
@@ -191,6 +219,20 @@ export default function SettingsPage({
             </div>
           </div>
 
+          {/* Section: Journey & Data Management */}
+          <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+            <h3 className="text-xs font-black text-slate-500 flex items-center gap-1.5">
+              <ShieldAlert className="h-4 w-4" />
+              <span>إدارة الرحلة والبيانات</span>
+            </h3>
+            <p className="text-[10px] text-slate-400 -mt-2">يمكنك بدء رحلة جديدة داخل أثر آية مع بقاء حسابك كما هو.</p>
+            <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/50 rounded-2xl space-y-3">
+              <h4 className="font-bold text-amber-800 dark:text-amber-400 text-sm">بدء رحلة جديدة</h4>
+              <p className="text-[10px] text-amber-700 dark:text-amber-500 leading-relaxed">سيتم تصفير التقدم، الخواطر، خطط الحفظ، المراجعات، الأوسمة، الإحصائيات، والمفضلة. سيبقى حسابك وبريدك الإلكتروني كما هما.</p>
+              <button type="button" onClick={() => setIsResetModalOpen(true)} className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-lg transition w-full">بدء رحلة جديدة</button>
+            </div>
+          </div>
+
           {/* Section 3: Data Integrity Info */}
           <div className="p-4 bg-emerald-500/5 rounded-2xl border border-emerald-500/15 text-[10px] leading-relaxed text-emerald-800 dark:text-emerald-400 flex items-start gap-2">
             <Info className="h-4.5 w-4.5 text-emerald-600 shrink-0 mt-0.5" />
@@ -217,6 +259,37 @@ export default function SettingsPage({
       ) : (
         <div className="p-6 bg-slate-50 dark:bg-slate-950 text-slate-400 rounded-2xl text-center border border-dashed text-xs space-y-2">
           <p>الرجاء تسجيل الدخول لتتمكن من تعديل الإعدادات والتحكم بأهداف وردك الشخصي.</p>
+        </div>
+      )}
+
+      {/* Reset Journey Confirmation Modal */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" dir="rtl">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-md shadow-xl border border-slate-200 dark:border-slate-800 p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-amber-100 dark:bg-amber-950/30 text-amber-500 rounded-full"><AlertTriangle className="h-5 w-5"/></div>
+              <div>
+                <h3 className="font-bold text-slate-800 dark:text-slate-100">هل تريدين بدء رحلة جديدة؟</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">سيتم حذف بيانات رحلتك الحالية داخل أثر آية، بما في ذلك الخواطر والتقدم وخطط الحفظ والمراجعة والأوسمة. لن يتم حذف حسابك أو بريدك الإلكتروني.</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 font-bold">ملاحظة: لن يتم حذف حلقات التدبر. يمكنك حذفها أو مغادرتها من صفحة الحلقات.</p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-500">للتأكيد، اكتبي "<span className="text-amber-600">بدء رحلة جديدة</span>" في الحقل أدناه:</label>
+              <input type="text" value={resetConfirmText} onChange={e => setResetConfirmText(e.target.value)} className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-950 border rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-500 text-center"/>
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button onClick={() => setIsResetModalOpen(false)} className="px-4 py-2 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl font-bold text-sm">إلغاء</button>
+              <button 
+                onClick={handleResetJourney} 
+                disabled={isResetting || resetConfirmText !== "بدء رحلة جديدة"} 
+                className="px-5 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-400 text-white rounded-xl font-bold text-sm flex items-center gap-2"
+              >
+                {isResetting ? <Loader className="h-4 w-4 animate-spin"/> : <RefreshCw className="h-4 w-4"/>}
+                {isResetting ? "جاري تصفير الرحلة..." : "تأكيد بدء رحلة جديدة"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

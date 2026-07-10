@@ -239,6 +239,46 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
     return "نص الآية غير متوفر";
   };
 
+  const getTadabburNoteTime = (value: any): number => {
+    if (!value) return 0;
+
+    if (typeof value?.toMillis === "function") {
+      return value.toMillis();
+    }
+
+    if (typeof value?.seconds === "number") {
+      return value.seconds * 1000;
+    }
+
+    if (value instanceof Date) {
+      return value.getTime();
+    }
+
+    const parsed = new Date(value).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  const sortedNotes = [...notes].sort((a, b) => {
+    const aPinned = Boolean((a as any).pinned || (a as any).isPinned);
+    const bPinned = Boolean((b as any).pinned || (b as any).isPinned);
+
+    if (aPinned !== bPinned) {
+      return aPinned ? -1 : 1;
+    }
+
+    if (aPinned && bPinned) {
+      return (
+        getTadabburNoteTime((b as any).pinnedAt || (b as any).updatedAt || (b as any).createdAt) -
+        getTadabburNoteTime((a as any).pinnedAt || (a as any).updatedAt || (a as any).createdAt)
+      );
+    }
+
+    return (
+      getTadabburNoteTime((b as any).createdAt || (b as any).updatedAt) -
+      getTadabburNoteTime((a as any).createdAt || (a as any).updatedAt)
+    );
+  });
+
   return (
     <div className="space-y-6">
       {/* Search and Action Bar */}
@@ -351,7 +391,7 @@ export default function NotesTab({ currentUser, onRefreshStats }: NotesTabProps)
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {notes.map((note) => (
+          {sortedNotes.map((note) => (
             <div 
               key={note.id}
               className={`bg-white dark:bg-slate-900 rounded-2xl p-5 shadow-sm border ${note.pinned ? "border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/10 dark:bg-emerald-950/5" : "border-slate-100 dark:border-slate-800"} flex flex-col justify-between hover:shadow-md transition duration-200 group relative`}

@@ -69,6 +69,23 @@ service cloud.firestore {
           );
       }
 
+
+      function isLeavingSelf() {
+        return isSignedIn()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'memberIds',
+            'members',
+            'membersCount',
+            'updatedAt'
+          ])
+          && request.auth.uid in oldMemberIds()
+          && !(request.auth.uid in newMemberIds())
+          && oldMemberIds().hasAll(newMemberIds())
+          && newMemberIds().size() == oldMemberIds().size() - 1
+          && request.auth.uid != resource.data.adminId
+          && request.auth.uid != resource.data.createdBy;
+      }
+
       // Required for searching by joinCode.
       allow read: if isSignedIn();
 
@@ -79,7 +96,7 @@ service cloud.firestore {
         && request.auth.uid in request.resource.data.memberIds;
 
       // Join group or admin update.
-      allow update: if isJoiningSelf() || isGroupAdmin();
+      allow update: if isJoiningSelf() || isLeavingSelf() || isGroupAdmin();
 
       allow delete: if isGroupAdmin();
 

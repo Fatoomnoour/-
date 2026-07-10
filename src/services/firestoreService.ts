@@ -8,10 +8,12 @@ import {
   deleteDoc,
   query,
   where,
+  writeBatch,
   orderBy,
   serverTimestamp,
   addDoc,
   arrayUnion,
+  arrayRemove,
   increment,
 } from "firebase/firestore";
 import { db, handleFirestoreError, OperationType } from "../lib/firebase";
@@ -27,6 +29,34 @@ import { SURAH_VERSE_COUNTS } from "../utils/quranUtils";
 // =========================
 // User Profile
 // =========================
+
+async function deleteCollectionDocs(collectionRef: any) {
+  if (!db) return;
+  const snapshot = await getDocs(collectionRef);
+  if (snapshot.empty) return;
+
+  const batches: Promise<void>[] = [];
+  let batch = writeBatch(db);
+  let count = 0;
+
+  for (const docSnap of snapshot.docs) {
+    batch.delete(docSnap.ref);
+    count++;
+
+    if (count === 450) {
+      batches.push(batch.commit());
+      batch = writeBatch(db);
+      count = 0;
+    }
+  }
+
+  if (count > 0) {
+    batches.push(batch.commit());
+  }
+
+  await Promise.all(batches);
+}
+
 export async function createUserProfile(userId: string, data: any) {
   if (!db) return;
 
@@ -344,6 +374,50 @@ export async function deleteMemorizationPlan(userId: string, planId: string) {
   }
 }
 
+export async function resetUserJourney(userId: string) {
+  if (!db) throw new Error("Database not connected");
+  if (!userId) throw new Error("User ID is required");
+
+  try {
+    // 1. Delete all subcollections
+    const notesRef = collection(db, `users/${userId}/notes`);
+    const bookmarksRef = collection(db, `users/${userId}/bookmarks`);
+    const plansRef = collection(db, `users/${userId}/memorizationPlans`);
+
+    await Promise.all([
+      deleteCollectionDocs(notesRef),
+      deleteCollectionDocs(bookmarksRef),
+      deleteCollectionDocs(plansRef),
+    ]);
+
+    // 2. Reset the readingProgress document to its default state
+    const progressRef = doc(db, `users/${userId}/readingProgress`, "current");
+    await setDoc(progressRef, {
+      userId: userId,
+      lastSurahId: 1,
+      lastSurahName: "الفاتحة",
+      lastVerseNumber: 1,
+      dailyGoalVerses: 50, // Reset to default
+      completedSurahs: [],
+      currentStreak: 0,
+      longestStreak: 0,
+      points: 0,
+      totalReadTimeMinutes: 0,
+      surahReadCounts: {},
+      totalVersesRead: 0,
+      lastReadDate: null,
+      khatmahPercentage: 0,
+      completedChallengeIds: [],
+      updatedAt: serverTimestamp(),
+    }, { merge: false }); // Use merge: false to completely overwrite the document
+
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `user journey for ${userId}`);
+    throw error;
+  }
+}
+
+
 // =========================
 // Groups
 // =========================
@@ -441,7 +515,7 @@ export async function getUserGroups(userId: string) {
       })
     );
 
-    return groups;
+    return groups.filter((group: any) => group.isArchived !== true && group.status !== "archived" && group.status !== "deleted");
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, "groups");
     return [];
@@ -471,6 +545,9 @@ export async function createGroup(userId: string, groupData: any) {
       ...groupData,
       memberIds: [userId],
       members: [adminMember],
+      membersCount: 1,
+      isArchived: false,
+      status: "active",
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -563,6 +640,85 @@ export async function joinGroup(
     return groupDocument.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, "groups/join");
+    throw error;
+  }
+}
+
+export async function archiveGroup(userId: string, groupId: string) {
+  if (!db) throw new Error("Database not connected");
+  if (!userId || !groupId) throw new Error("بيانات الحلقة غير مكتملة");
+
+  try {
+    const groupRef = doc(db, "groups", groupId);
+    const groupSnap = await getDoc(groupRef);
+
+    if (!groupSnap.exists()) {
+      throw new Error("الحلقة غير موجودة");
+    }
+
+    const data = groupSnap.data() as any;
+    const isAdmin = data.adminId === userId || data.createdBy === userId;
+
+    if (!isAdmin) {
+      throw new Error("حذف الحلقة متاح لصاحبة الحلقة فقط");
+    }
+
+    await updateDoc(groupRef, {
+      isArchived: true,
+      status: "archived",
+      archivedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `groups/${groupId}/archive`);
+    throw error;
+  }
+}
+
+export async function leaveGroup(userId: string, groupId: string) {
+  if (!db) throw new Error("Database not connected");
+  if (!userId || !groupId) throw new Error("بيانات الحلقة غير مكتملة");
+
+  try {
+    const groupRef = doc(db, "groups", groupId);
+    const groupSnap = await getDoc(groupRef);
+
+    if (!groupSnap.exists()) {
+      throw new Error("الحلقة غير موجودة");
+    }
+
+    const data = groupSnap.data() as any;
+    const isAdmin = data.adminId === userId || data.createdBy === userId;
+
+    if (isAdmin) {
+      throw new Error("لا يمكن لصاحبة الحلقة مغادرتها قبل حذفها أو نقل الملكية.");
+    }
+
+    const currentMembers = Array.isArray(data.members) ? data.members : [];
+    const filteredMembers = currentMembers.filter(
+      (member: any) => member?.userId !== userId
+    );
+
+    const currentMemberIds = Array.isArray(data.memberIds) ? data.memberIds : [];
+    const nextMemberCount = Math.max(
+      0,
+      Number(data.membersCount || currentMemberIds.length || currentMembers.length) - 1
+    );
+
+    await updateDoc(groupRef, {
+      memberIds: arrayRemove(userId),
+      members: filteredMembers,
+      membersCount: nextMemberCount,
+      updatedAt: serverTimestamp(),
+    });
+
+    try {
+      await deleteDoc(doc(db, `groups/${groupId}/members`, userId));
+    } catch (memberDeleteError) {
+      console.warn("Could not delete group member document:", memberDeleteError);
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `groups/${groupId}/leave`);
     throw error;
   }
 }

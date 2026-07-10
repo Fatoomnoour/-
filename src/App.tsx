@@ -748,6 +748,7 @@ export default function App() {
                   <SettingsPage
                     currentUser={currentUser}
                     onUpdateUser={(u) => setCurrentUser(u)}
+                    onAccountReset={fetchStats}
                     onShowToast={handleShowToast}
                     onRefreshStats={fetchStats}
                   />

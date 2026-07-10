@@ -1,33 +1,44 @@
 import React, { useState, useEffect } from "react";
 import {
+  Activity,
+  Edit,
   Award,
+  BarChart2,
+  BookMarked,
   BookOpen,
   Calendar,
+  Check,
   CheckCircle2,
   ChevronLeft,
-  Star,
+  ChevronRight,
   Clock,
+  Compass,
   Flame,
+  Goal,
   HelpCircle,
   LayoutDashboard,
-  RefreshCw,
+  Lightbulb,
+  MapPin,
   Play,
+  Plus,
+  RefreshCw,
+  Repeat,
   Share2,
+  Sparkles,
+  Star,
   Target,
-  BarChart2,
   TrendingUp,
-  Compass,
-  ChevronRight,
-  Zap,
+  Zap
 } from "lucide-react";
 
 import {
   getReadingProgress,
   getUserMemorizationPlans,
+  getUserNotes,
 } from "../services/firestoreService";
 
-import { SURAH_LIST } from "../utils/quranUtils";
-import BookmarksTab from "./BookmarksTab";
+import { SURAH_LIST, SURAH_VERSE_COUNTS } from "../utils/quranUtils";
+import BookmarksTab, { QuranNote } from "./BookmarksTab";
 import ProgressTab from "./ProgressTab";
 import { User, MemorizationPlan, ReadingProgress } from "../types";
 import confetti from "canvas-confetti";
@@ -38,7 +49,9 @@ interface ProgressPageProps {
   onShowToast: (msg: string, type: "success" | "error" | "info") => void;
   onRefreshStats: () => void;
   onNavigateToReader: (surahId?: number, verseNum?: number) => void;
+  onNavigateToTab: (tab: string) => void;
 }
+
 
 export default function ProgressPage({
   currentUser,
@@ -46,8 +59,10 @@ export default function ProgressPage({
   onShowToast,
   onRefreshStats,
   onNavigateToReader,
+  onNavigateToTab,
 }: ProgressPageProps) {
   const [plans, setPlans] = useState<MemorizationPlan[]>([]);
+  const [notes, setNotes] = useState<QuranNote[]>([]);
   const [progress, setProgress] = useState<ReadingProgress | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<
@@ -66,12 +81,14 @@ export default function ProgressPage({
     setIsLoading(true);
 
     try {
-      const [plansData, progressData] = await Promise.all([
+      const [plansData, progressData, notesData] = await Promise.all([
         getUserMemorizationPlans(currentUser.id),
         getReadingProgress(currentUser.id),
+        getUserNotes(currentUser.id),
       ]);
 
       setPlans(plansData || []);
+      setNotes(notesData || []);
       setProgress(progressData || null);
     } catch (err) {
       console.error("Error loading progress page data:", err);
@@ -123,14 +140,131 @@ export default function ProgressPage({
     );
   }
 
-  const completedSurahsCount = progress?.completedSurahs?.length || 0;
-  const growthLevel =
-    progress?.treeLevel ||
-    Math.min(5, Math.max(1, Math.floor(completedSurahsCount / 20) + 1));
   const khatmahPercentage =
     progress?.khatmahPercentage || ((progress?.totalVersesRead || 0) / 6236) * 100;
   const hoursRead = Math.floor((progress?.totalReadTimeMinutes || 0) / 60);
   const minsRead = (progress?.totalReadTimeMinutes || 0) % 60;
+
+  // --- Date Helpers ---
+  function getMillis(value: any): number {
+    if (!value) return 0;
+    if (typeof value?.toMillis === "function") return value.toMillis();
+    if (typeof value?.seconds === "number") return value.seconds * 1000;
+    if (value instanceof Date) return value.getTime();
+    const parsed = new Date(value).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  function isToday(value: any): boolean {
+    const ms = getMillis(value);
+    if (!ms) return false;
+    const d = new Date(ms);
+    const now = new Date();
+    return (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    );
+  }
+
+  // --- Achievements Data Logic ---
+  const points = progress?.points || 0;
+  const DAILY_SCORE_TARGET = 50;
+
+  const hasTodayReading = isToday(progress?.lastReadDate);
+  const todayNotesCount = notes.filter(note => isToday(note.createdAt)).length;
+  const hasTodayTadabbur = todayNotesCount > 0;
+  const todayReviewsCount = plans.filter(p => p.revisionHistory?.some(rh => isToday(rh.date))).length;
+  const hasTodayReview = todayReviewsCount > 0;
+  const hasTodaySavedPosition = hasTodayReading; // Assuming saving position happens with reading
+
+  let dailyScore = 0;
+  if (hasTodayReading) dailyScore += 15;
+  if (hasTodayTadabbur) dailyScore += 10;
+  if (hasTodayReview) dailyScore += 10;
+  if (hasTodaySavedPosition) dailyScore += 5;
+
+  const allDailyTasksCompleted = hasTodayReading && hasTodayTadabbur && hasTodayReview && hasTodaySavedPosition;
+  if (allDailyTasksCompleted) dailyScore += 10;
+  dailyScore = Math.min(dailyScore, DAILY_SCORE_TARGET);
+
+  const treeStages = [
+    { level: 1, name: "بذرة", icon: "🌱", minPoints: 0, maxPoints: 99 },
+    { level: 2, name: "نبتة", icon: "🌿", minPoints: 100, maxPoints: 299 },
+    { level: 3, name: "غرسة", icon: "🪴", minPoints: 300, maxPoints: 699 },
+    { level: 4, name: "شجرة", icon: "🌳", minPoints: 700, maxPoints: 1499 }, 
+    { level: 5, name: "ظلّ وثمار", icon: "🍎", minPoints: 1500, maxPoints: Infinity }
+  ];
+
+  const currentTreeStage = treeStages.slice().reverse().find(s => points >= s.minPoints) || treeStages[0];
+  const nextTreeStage = treeStages.find(s => s.level === currentTreeStage.level + 1);
+  const treeProgress = nextTreeStage ? Math.min(100, ((points - currentTreeStage.minPoints) / (nextTreeStage.minPoints - currentTreeStage.minPoints)) * 100) : 100;
+
+
+  const dailyTasks = [ // Updated icons for consistency
+    { id: 'read_wird', title: 'قراءة ورد اليوم', description: 'اقرأ عددًا من الآيات اليوم', isCompleted: hasTodayReading, icon: BookOpen, action: openLastReadingPosition },
+    { id: 'tadabbur', title: 'خاطرة تدبر', description: 'اكتب خاطرة واحدة على الأقل', isCompleted: hasTodayTadabbur, icon: Edit, action: () => onNavigateToTab("notes") },
+    { id: 'hifz_review', title: 'مراجعة الحفظ', description: 'راجع آيات من خطتك الحالية', isCompleted: hasTodayReview, icon: Repeat, action: () => setActiveTab("plans") },
+    { id: 'save_position', title: 'تثبيت الموضع', description: 'سجّل آخر موضع وصلت إليه', isCompleted: hasTodaySavedPosition, icon: MapPin, action: () => onNavigateToReader(progress?.lastSurahId, progress?.lastVerseNumber) },
+  ];
+
+  const weeklyChallenges = [
+    { id: "weekly_surah_kahf", title: "اقرأ سورة الكهف", current: progress?.completedChallengeIds?.includes("weekly_surah_kahf") ? 1 : 0, target: 1, reward: 50, action: () => onNavigateToReader(18, 1) },
+    { id: "read_500_ayahs", title: "تلاوة 500 آية", current: progress?.completedChallengeIds?.includes("read_500_ayahs") ? 500 : Math.min(500, progress?.totalVersesRead || 0), target: 500, reward: 200, action: openLastReadingPosition },
+  ];
+
+  const badges = {
+    reading: [
+      { id: 'read_1_day', title: 'قارئ اليوم', requirement: 'أكمل ورد يوم واحد', current: Math.min(1, progress?.currentStreak || 0), target: 1, icon: '📖' },
+      { id: 'read_7_days', title: 'سلسلة 7 أيام', requirement: 'حافظ على سلسلة القراءة ٧ أيام', current: Math.min(7, progress?.longestStreak || 0), target: 7, icon: '🔥' },
+      { id: 'first_surah', title: 'أول سورة', requirement: 'أكمل قراءة سورة كاملة', current: (progress?.completedSurahs || []).length > 0 ? 1 : 0, target: 1, icon: '🌟' },
+      { id: 'juz_complete', title: 'ختم جزء', requirement: 'أكمل قراءة جزء كامل (تقديري)', current: Math.min(30, Math.floor((progress?.totalVersesRead || 0) / 200)), target: 1, icon: '📚' },
+      { id: 'khatmah', title: 'ختم القرآن', requirement: 'أكمل ختمة كاملة للقرآن', current: khatmahPercentage, target: 100, icon: '👑' },
+    ],
+    reflection: [
+      { id: 'first_note', title: 'متدبر اليوم', requirement: 'دوّن أول خاطرة تدبر', current: todayNotesCount, target: 1, icon: '✍️' },
+      { id: 'active_reflector', title: 'متدبر نشط', requirement: 'دوّن ١٠ خواطر تدبر', current: notes.length, target: 10, icon: '✒️' },
+    ],
+    memorization: [
+      { id: 'first_plan', title: 'حافظ الورد', requirement: 'أنشئ أول خطة حفظ', current: plans.length, target: 1, icon: '🌱' },
+      { id: 'mastered_plan', title: 'مراجع ثابت', requirement: 'أتقن مراجعة مقطع واحد', current: plans.filter(p => p.completed).length, target: 1, icon: '🎯' }
+    ]
+  };
+
+  // Categorize badges for display
+  const allFlatBadges = Object.values(badges).flat();
+  const earnedBadges = allFlatBadges.filter(b => b.current >= b.target);
+  const inProgressBadges = allFlatBadges.filter(b => b.current > 0 && b.current < b.target);
+  const lockedBadges = allFlatBadges.filter(b => b.current === 0);
+
+  // Simplified 7-Day Activity Summary (without complex daily logs)
+  const last7DaysActivity = {
+    activeDays: progress?.currentStreak || 0,
+    notesToday: todayNotesCount,
+    versesReadToday: hasTodayReading ? (progress?.dailyGoalVerses || 0) : 0, // Simplified to today's goal if read
+    reviewsToday: hasTodayReview ? 1 : 0,
+  };
+
+  // Streaks
+  const readingStreak = {
+    current: progress?.currentStreak || 0,
+    longest: progress?.longestStreak || 0,
+    nextMilestone: (progress?.currentStreak || 0) < 7 ? 7 : ((progress?.currentStreak || 0) < 30 ? 30 : ((progress?.currentStreak || 0) < 100 ? 100 : (progress?.currentStreak || 0) + 100)),
+  };
+
+  // Next Best Action (simplified)
+  let nextBestActionMessage = "ابدأ تحدي اليوم لفتح أول إنجاز";
+  if (!hasTodayReading) {
+    nextBestActionMessage = "ابدأ قراءة ورد اليوم لتحافظ على أثرك";
+  } else if (!hasTodayTadabbur) {
+    nextBestActionMessage = "اكتب خاطرة تدبر واحدة لفتح وسام 'متدبر اليوم'";
+  } else if (!hasTodayReview && plans.length > 0) {
+    nextBestActionMessage = "راجع خطة حفظك لتثبيت وردك";
+  } else if (dailyScore < DAILY_SCORE_TARGET) {
+    nextBestActionMessage = `بقيت لك ${DAILY_SCORE_TARGET - dailyScore} نقطة لإكمال إنجاز اليوم`;
+  } else if (points < 100) {
+    nextBestActionMessage = "واصل التقدم لتنمو شجرتك إلى 'نبتة'";
+  }
 
   return (
     <div
@@ -207,8 +341,8 @@ export default function ProgressPage({
 
       {activeTab === "journey" && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          {/* PHASE 1: Hero Action Card */}
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 shadow-sm flex flex-col md:flex-row items-center gap-6">
+          {/* PHASE 1 SAFE: Static Hero Action Card */}
+          <div className="bg-gradient-to-l from-emerald-50 via-white to-white dark:from-emerald-950/20 dark:via-slate-900 dark:to-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 shadow-sm flex flex-col md:flex-row items-center gap-6">
             <div className="flex-1 text-right">
               <h2 className="text-2xl font-black text-slate-800 dark:text-white">أكمل أثر اليوم</h2>
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
@@ -216,33 +350,11 @@ export default function ProgressPage({
               </p>
             </div>
             <div className="w-full md:w-auto flex flex-col md:flex-row items-center gap-4 p-4 md:p-0 bg-slate-50 dark:bg-slate-950 md:bg-transparent md:dark:bg-transparent rounded-2xl md:rounded-none border md:border-0 border-slate-100 dark:border-slate-800">
-              <div className="relative w-24 h-24">
-                <svg className="w-full h-full" viewBox="0 0 36 36">
-                  <path
-                    className="text-slate-100 dark:text-slate-800"
-                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="3"
-                  ></path>
-                  <path
-                    className="text-emerald-500"
-                    stroke="currentColor"
-                    strokeWidth="3"
-                    fill="none"
-                    strokeDasharray="0, 100" // Placeholder for daily progress
-                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                  ></path>
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400">0</span>
-                  <span className="text-xs text-slate-400">/ {progress?.dailyGoalVerses || 50}</span>
-                </div>
-              </div>
               <div className="text-center md:text-right">
                 <h4 className="font-bold text-slate-800 dark:text-slate-200">وردك اليومي</h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">تابع قراءة الآيات المستهدفة لليوم.</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">خطوة واحدة تقرّبك من أثر ثابت</p>
                 <button
+                  type="button"
                   onClick={openLastReadingPosition}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-sm flex items-center gap-2 transition"
                 >
@@ -402,22 +514,26 @@ export default function ProgressPage({
               <div className="space-y-3">
                 {[
                   {
-                    id: 1,
+                    id: "weekly_surah_kahf",
                     title: "اقرأ سورة الكهف",
-                    current: 0,
+                    current: progress?.completedChallengeIds?.includes("weekly_surah_kahf") ? 1 : 0,
                     target: 1,
                     reward: 50,
                     action: () => onNavigateToReader(18, 1),
                   },
                   {
-                    id: 2,
+                    id: "read_500_ayahs",
                     title: "تلاوة 500 آية",
-                    current: Math.min(500, progress?.totalVersesRead || 0),
+                    current: progress?.completedChallengeIds?.includes("read_500_ayahs")
+                      ? 500
+                      : Math.min(500, progress?.totalVersesRead || 0),
                     target: 500,
                     reward: 200,
                     action: openLastReadingPosition,
                   },
-                ].map((challenge) => (
+                ].map((challenge) => {
+                  const isCompleted = challenge.current >= challenge.target;
+                  return (
                   <div
                     key={challenge.id}
                     onClick={challenge.action}
@@ -427,9 +543,13 @@ export default function ProgressPage({
                       <span className="font-bold text-sm text-slate-800 dark:text-white">
                         {challenge.title}
                       </span>
-                      <span className="text-xs font-bold text-amber-600 bg-amber-100 dark:bg-amber-900/40 px-2 py-1 rounded-md">
-                        +{challenge.reward} نقطة
-                      </span>
+                      {isCompleted ? (
+                        <span className="text-xs font-bold text-emerald-600 bg-emerald-100 dark:bg-emerald-900/40 px-2 py-1 rounded-md flex items-center gap-1"><CheckCircle2 className="w-3 h-3"/> مكتمل</span>
+                      ) : (
+                        <span className="text-xs font-bold text-amber-600 bg-amber-100 dark:bg-amber-900/40 px-2 py-1 rounded-md">
+                          +{challenge.reward} نقطة
+                        </span>
+                      )}
                     </div>
 
                     <div
@@ -453,7 +573,7 @@ export default function ProgressPage({
                       </span>
                     </div>
                   </div>
-                ))}
+                )})}
               </div>
             </div>
           </div>
@@ -474,13 +594,23 @@ export default function ProgressPage({
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4 animate-in fade-in duration-500">
           <div className="flex justify-between items-center pb-4 border-b border-slate-100 dark:border-slate-800">
             <h3 className="font-bold text-lg text-slate-800 dark:text-white">
-              المراجعة الذكية (Spaced Repetition)
+              خطط الحفظ والمراجعة الذكية
             </h3>
           </div>
 
           {plans.length === 0 ? (
-            <div className="text-center py-10 text-slate-400">
-              لا توجد خطط حفظ. ابدأ بإضافة خطة جديدة!
+            <div className="text-center py-10 px-4 bg-slate-50 dark:bg-slate-950/50 rounded-2xl border border-dashed">
+              <BookMarked className="h-10 w-10 text-slate-300 dark:text-slate-700 mx-auto mb-3" />
+              <h3 className="font-bold text-slate-700 dark:text-slate-300 mb-1">لا توجد خطط حفظ بعد</h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mb-5 max-w-sm mx-auto">
+                ابدأ بإنشاء خطة حفظ مخصصة، وسنساعدك على متابعة وردك ومراجعتك بانتظام.
+              </p>
+              <button
+                onClick={() => onNavigateToTab("memorization")}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center gap-2 transition shadow-sm mx-auto text-sm">
+                <Plus className="h-4 w-4" />
+                إنشاء خطة حفظ جديدة
+              </button>
             </div>
           ) : (
             plans.map((plan) => (
@@ -513,74 +643,134 @@ export default function ProgressPage({
 
       {activeTab === "achievements" && (
         <div className="space-y-6 animate-in fade-in duration-500">
-          <div className="bg-gradient-to-b from-emerald-900 to-slate-900 rounded-3xl p-8 text-center relative overflow-hidden border border-slate-800">
-            <h3 className="text-white font-bold text-2xl mb-2 relative z-10">
-              شجرة الإنجاز الإيمانية
-            </h3>
-            <p className="text-emerald-200/70 text-sm mb-10 relative z-10">
-              تنمو الشجرة مع استمرارك في التلاوة وزيادة نقاطك
-            </p>
+          {/* Daily Challenge Hero */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-5 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+              <div>
+                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 text-lg"><Goal className="h-5 w-5 text-emerald-600"/>تحدي اليوم</h3>
+                <p className="text-sm text-slate-500 mt-1">خطوات صغيرة اليوم تصنع أثرًا ثابتًا في رحلتك مع القرآن</p>
+              </div>
+              {allDailyTasksCompleted && (
+                <div className="p-2 px-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/50 rounded-xl text-center font-bold text-emerald-700 dark:text-emerald-400 text-sm flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4"/>
+                  أحسنت! أتممت أثر اليوم 🌿
+                </div>
+              )}
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {dailyTasks.map(task => (
+                <div key={task.id} onClick={task.action} className={`p-4 rounded-xl space-y-3 cursor-pointer transition-all duration-200 ${task.isCompleted ? 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/50' : 'bg-slate-50 dark:bg-slate-950/50 border border-slate-100 dark:border-slate-800 hover:border-emerald-300'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className={`p-2 rounded-lg ${task.isCompleted ? 'bg-emerald-100 dark:bg-emerald-900 text-emerald-600' : 'bg-white dark:bg-slate-800 text-slate-500'}`}><task.icon className="h-5 w-5"/></div>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${task.isCompleted ? 'bg-white dark:bg-slate-800 text-emerald-600' : 'bg-white dark:bg-slate-800 text-slate-500'}`}>
+                      {task.isCompleted ? 'مكتمل' : 'قيد التقدم'}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-slate-700 dark:text-slate-300">{task.title}</p>
+                    <p className="text-[11px] text-slate-400 h-8">{task.description}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
 
-            <div className="flex justify-center items-end h-48 relative z-10">
-              <div className="text-9xl transition-transform duration-1000 transform hover:scale-110 cursor-default">
-                {growthLevel === 1
-                  ? "🌱"
-                  : growthLevel === 2
-                  ? "🌿"
-                  : growthLevel === 3
-                  ? "🌳"
-                  : growthLevel === 4
-                  ? "🌸"
-                  : "🍎"}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Faith Tree & Daily Points */}
+            <div className="lg:col-span-1 space-y-6">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-5 text-center">
+                <h3 className="text-sm font-bold text-slate-800 dark:text-white">رصيد أثر اليوم</h3>
+                <p className="text-[10px] text-slate-400 mb-3">أكمل مهام اليوم لتحصل على مكافأة الإنجاز</p>
+                <div className="relative w-24 h-24 mx-auto flex items-center justify-center">
+                  <svg className="w-full h-full" viewBox="0 0 36 36">
+                    <path className="text-slate-100 dark:text-slate-800" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3"></path>
+                    <path className="text-blue-500" stroke="currentColor" strokeWidth="3" fill="none" strokeDasharray={`${(dailyScore/DAILY_SCORE_TARGET)*100}, 100`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"></path>
+                  </svg>
+                  <div className="absolute text-2xl font-black text-blue-600 dark:text-blue-400">{dailyScore}</div>
+                </div>
+                <p className="text-xs font-bold text-slate-400 mt-2">من {DAILY_SCORE_TARGET} نقطة</p>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-5 text-center">
+                <h3 className="text-sm font-bold text-slate-800 dark:text-white">شجرة الإنجاز الإيمانية</h3>
+                <p className="text-[10px] text-slate-400 mb-3">رصيد الأثر الكلي: {points} نقطة</p>
+                <div className="text-7xl my-3 transition-transform duration-500 hover:scale-110">{currentTreeStage.icon}</div>
+                <p className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">مستواك الحالي: {currentTreeStage.name}</p>
+                {nextTreeStage && (
+                  <div className="max-w-xs mx-auto mt-2">
+                    <div className="flex justify-between text-[9px] font-bold text-slate-400 mb-1">
+                      <span>التقدم للمستوى التالي</span>
+                      <span>{Math.round(treeProgress)}%</span>
+                    </div>
+                    <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden" dir="ltr">
+                      <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${treeProgress}%` }} />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20 mix-blend-overlay"></div>
-          </div>
-
-          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-100 dark:border-slate-800">
-            <h3 className="font-bold text-lg text-slate-800 dark:text-white mb-4">
-              الأوسمة والنياشين
-            </h3>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-              {[
-                { icon: "📖", title: "أول تلاوة", earned: true },
-                {
-                  icon: "🔥",
-                  title: "مستمر ٧ أيام",
-                  earned: (progress?.longestStreak || 0) >= 7,
-                },
-                {
-                  icon: "🌟",
-                  title: "ختم جزء كامل",
-                  earned: (progress?.totalVersesRead || 0) >= 148,
-                },
-                {
-                  icon: "👑",
-                  title: "ختم القرآن",
-                  earned: khatmahPercentage >= 100,
-                },
-                {
-                  icon: "🎯",
-                  title: "مراجعة متقنة",
-                  earned: plans.some((p) => (p.revisionHistory?.length || 0) > 0),
-                },
-              ].map((badge, index) => (
-                <div
-                  key={index}
-                  className={`p-4 rounded-2xl flex flex-col items-center justify-center gap-2 text-center border ${
-                    badge.earned
-                      ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800"
-                      : "bg-slate-50 dark:bg-slate-950 border-slate-100 dark:border-slate-800 grayscale opacity-50"
-                  }`}
-                >
-                  <span className="text-4xl">{badge.icon}</span>
-                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    {badge.title}
-                  </span>
+            {/* Badges */}
+            <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-5">
+              <h3 className="font-bold text-slate-800 dark:text-white mb-1 flex items-center gap-2"><Award className="h-5 w-5 text-blue-500"/>الأوسمة والإنجازات</h3>
+              <p className="text-xs text-slate-500 mb-4">إنجازاتك في رحلة القرآن</p>
+              {Object.entries(badges).map(([category, badgeList]) => (
+                <div key={category} className="mb-5">
+                  <h4 className="text-xs font-bold text-slate-400 mb-3 capitalize">{category}</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {badgeList.map(badge => {
+                      const isEarned = badge.current >= badge.target;
+                      const progressPercent = Math.min(100, (badge.current / badge.target) * 100);
+                      const isInProgress = !isEarned && progressPercent > 0;
+                      return (
+                        <div key={badge.id} className={`p-3 rounded-xl border ${isEarned ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-100 dark:border-emerald-900/50' : 'bg-slate-50 dark:bg-slate-950/50 border-slate-100 dark:border-slate-800' }`}>
+                          <div className="flex items-start justify-between">
+                            <div className={`p-2 rounded-lg ${isEarned ? 'bg-emerald-100 dark:bg-emerald-900 text-emerald-600' : isInProgress ? 'bg-amber-100 dark:bg-amber-900 text-amber-600' : 'bg-white dark:bg-slate-800 text-slate-400 opacity-70'}`}>
+                              <span className={`text-2xl ${!isEarned && 'grayscale'}`}>{badge.icon}</span>
+                            </div>
+                            {isEarned && <div className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-800 text-emerald-600">تم فتح الوسام</div>}
+                            {isInProgress && <div className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-800 text-amber-600">قيد التقدم</div>}
+                            {!isEarned && !isInProgress && <div className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-800 text-slate-500">لم يتحقق بعد</div>}
+                          </div>
+                          <p className="font-bold text-xs text-slate-800 dark:text-slate-200 mt-2">{badge.title}</p>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 h-5">{isEarned ? ' ' : badge.requirement}</p>
+                          {isInProgress && (
+                            <div className="w-full bg-slate-200 dark:bg-slate-800 h-1 rounded-full mt-1 overflow-hidden" dir="ltr">
+                              <div className="bg-amber-500 h-full rounded-full" style={{ width: `${progressPercent}%` }} />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Weekly Challenges */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-5">
+            <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2"><Zap className="h-5 w-5 text-amber-500"/>تحديات أسبوعية</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {weeklyChallenges.map(challenge => {
+                const isCompleted = challenge.current >= challenge.target;
+                return (
+                  <div key={challenge.id} onClick={challenge.action} className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-xl cursor-pointer hover:border-emerald-300 transition">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="font-bold text-sm text-slate-800 dark:text-white">{challenge.title}</span>
+                      {isCompleted ? (
+                        <span className="text-xs font-bold text-emerald-600 bg-emerald-100 dark:bg-emerald-900/40 px-2 py-1 rounded-md flex items-center gap-1"><CheckCircle2 className="w-3 h-3"/> مكتمل</span>
+                      ) : (
+                        <span className="text-xs font-bold text-amber-600 bg-amber-100 dark:bg-amber-900/40 px-2 py-1 rounded-md">+{challenge.reward} نقطة</span>
+                      )}
+                    </div>
+                    <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden" dir="ltr">
+                      <div className="bg-emerald-500 h-full rounded-full transition-all" style={{ width: `${Math.min(100, (challenge.current / challenge.target) * 100)}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

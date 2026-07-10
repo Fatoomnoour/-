@@ -1,7 +1,7 @@
-import { getUserGroups, createGroup, joinGroup } from "../../services/firestoreService";
+import { getUserGroups, createGroup, joinGroup, archiveGroup, leaveGroup } from "../../services/firestoreService";
 import React, { useState, useEffect } from "react";
 import { User, QuranGroup } from "../../types";
-import { Users, Plus, Key, BookOpen } from "lucide-react";
+import { Users, Plus, Key, BookOpen, CalendarDays, Trash2, LogOut } from "lucide-react";
 import GroupPage from "./GroupPage";
 
 interface GroupsTabProps {
@@ -30,6 +30,107 @@ export default function GroupsTab({ currentUser, onShowToast }: GroupsTabProps) 
     maxMembers: 20
   });
 
+  const getGroupMillis = (value: any): number => {
+    if (!value) return 0;
+
+    if (typeof value?.toMillis === "function") {
+      return value.toMillis();
+    }
+
+    if (typeof value?.seconds === "number") {
+      return value.seconds * 1000;
+    }
+
+    if (value instanceof Date) {
+      return value.getTime();
+    }
+
+    const parsed = new Date(value).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  const formatGroupDate = (value: any) => {
+    const ms = getGroupMillis(value);
+    if (!ms) return "تاريخ الإنشاء غير متوفر";
+
+    return new Intl.DateTimeFormat("ar-EG", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }).format(new Date(ms));
+  };
+
+  const isGroupAdmin = (group: QuranGroup) => {
+    if (!currentUser) return false;
+
+    return (
+      group.adminId === currentUser.id ||
+      (group as any).createdBy === currentUser.id ||
+      group.members?.some(
+        (member) => member.userId === currentUser.id && member.role === "admin"
+      )
+    );
+  };
+
+  const handleArchiveGroup = async (
+    group: QuranGroup,
+    event: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    event.stopPropagation();
+
+    if (!currentUser) return;
+
+    if (!isGroupAdmin(group)) {
+      onShowToast("حذف الحلقة متاح لصاحبة الحلقة فقط", "error");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `هل تريدين حذف حلقة "${group.name}"؟
+سيتم إخفاؤها من قائمة الحلقات دون حذف بياناتها نهائيًا.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await archiveGroup(currentUser.id, group.id);
+      setGroups((prev) => prev.filter((item) => item.id !== group.id));
+      onShowToast("تم حذف الحلقة بنجاح", "success");
+    } catch (err: any) {
+      console.error(err);
+      onShowToast(err?.message || "تعذر حذف الحلقة", "error");
+    }
+  };
+
+  const handleLeaveGroup = async (
+    group: QuranGroup,
+    event: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    event.stopPropagation();
+
+    if (!currentUser) return;
+
+    if (isGroupAdmin(group)) {
+      onShowToast("لا يمكن لصاحبة الحلقة مغادرتها قبل حذفها أو نقل الملكية.", "error");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `هل تريدين مغادرة حلقة "${group.name}"؟`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await leaveGroup(currentUser.id, group.id);
+      setGroups((prev) => prev.filter((item) => item.id !== group.id));
+      onShowToast("تمت مغادرة الحلقة بنجاح", "success");
+    } catch (err: any) {
+      console.error(err);
+      onShowToast(err?.message || "تعذر مغادرة الحلقة", "error");
+    }
+  };
+
   useEffect(() => {
     fetchGroups();
   }, [currentUser, activeGroup]);
@@ -53,18 +154,32 @@ export default function GroupsTab({ currentUser, onShowToast }: GroupsTabProps) 
     
     try {
       const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-      await createGroup(currentUser.id, {
+      const adminMember = {
+        userId: currentUser.id,
+        name: currentUser.displayName || currentUser.name || "عضو",
+        role: "admin" as const,
+        joinedAt: new Date().toISOString()
+      };
+
+      const createdGroupId = await createGroup(currentUser.id, {
         ...newGroupData,
         joinCode: code,
         adminId: currentUser.id,
-        members: [{ // Initial members array just for display cache, though subcollection exists
-          userId: currentUser.id,
-          name: currentUser.displayName || currentUser.name || "عضو",
-          role: "admin",
-          joinedAt: new Date().toISOString()
-        }]
+        members: [adminMember]
       });
+
+      const localGroup: QuranGroup = {
+        id: createdGroupId || `local-${Date.now()}`,
+        ...newGroupData,
+        joinCode: code,
+        adminId: currentUser.id,
+        members: [adminMember],
+        reflections: [],
+        createdAt: new Date().toISOString(),
+        ...( { createdBy: currentUser.id, memberIds: [currentUser.id], isArchived: false, status: "active" } as any ),
+      };
       
+      setGroups((prev) => [localGroup, ...prev.filter((group) => group.id !== localGroup.id)]);
       setIsCreating(false);
       fetchGroups();
       onShowToast("تم إنشاء حلقة التدبر بنجاح!", "success");
@@ -188,30 +303,62 @@ export default function GroupsTab({ currentUser, onShowToast }: GroupsTabProps) 
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {groups.map(group => (
-            <div 
-              key={group.id} 
-              onClick={() => setActiveGroup(group)}
-              className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl p-5 shadow-sm hover:shadow-md cursor-pointer transition flex flex-col justify-between h-full group"
-            >
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="text-3xl">{group.icon}</div>
-                  <span className="text-[10px] font-bold px-2 py-1 bg-slate-50 dark:bg-slate-800 rounded-lg text-slate-500 flex items-center gap-1">
-                    <Users className="h-3 w-3" /> {group.members.length}
-                  </span>
+          {groups.map(group => {
+            const admin = isGroupAdmin(group);
+            const membersCount = Array.isArray(group.members) ? group.members.length : Number((group as any).membersCount || 0);
+
+            return (
+              <div 
+                key={group.id} 
+                onClick={() => setActiveGroup(group)}
+                className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl p-5 shadow-sm hover:shadow-md cursor-pointer transition flex flex-col justify-between h-full group"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-3xl">{group.icon}</div>
+                    <span className="text-[10px] font-bold px-2 py-1 bg-slate-50 dark:bg-slate-800 rounded-lg text-slate-500 flex items-center gap-1">
+                      <Users className="h-3 w-3" /> {membersCount}
+                    </span>
+                  </div>
+                  <h3 className="font-bold text-slate-800 dark:text-slate-100 text-lg">{group.name}</h3>
+                  <p className="text-xs text-slate-500 mt-1 line-clamp-2">{group.description}</p>
+                  <p className="text-[11px] text-slate-400 mt-3 flex items-center gap-1.5">
+                    <CalendarDays className="h-3.5 w-3.5" />
+                    أُنشئت في: {formatGroupDate(group.createdAt)}
+                  </p>
                 </div>
-                <h3 className="font-bold text-slate-800 dark:text-slate-100 text-lg">{group.name}</h3>
-                <p className="text-xs text-slate-500 mt-1 line-clamp-2">{group.description}</p>
+                <div className="mt-4 pt-4 border-t border-slate-50 dark:border-slate-800/50 space-y-3">
+                  <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 group-hover:text-emerald-500 transition">
+                    <BookOpen className="h-4 w-4" /> 
+                    سورة {group.surahName} (الآيات {group.verseRange})
+                  </p>
+                  <div className="flex items-center justify-end gap-2">
+                    {admin ? (
+                      <button
+                        type="button"
+                        onClick={(event) => handleArchiveGroup(group, event)}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-1.5 text-[11px] font-bold text-rose-600 hover:bg-rose-100 transition"
+                        title="حذف الحلقة"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        حذف الحلقة
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(event) => handleLeaveGroup(group, event)}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-slate-50 px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-100 transition"
+                        title="مغادرة الحلقة"
+                      >
+                        <LogOut className="h-3.5 w-3.5" />
+                        مغادرة الحلقة
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="mt-4 pt-4 border-t border-slate-50 dark:border-slate-800/50">
-                <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 group-hover:text-emerald-500 transition">
-                  <BookOpen className="h-4 w-4" /> 
-                  سورة {group.surahName} (الآيات {group.verseRange})
-                </p>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

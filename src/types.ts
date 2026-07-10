@@ -145,5 +145,12 @@ export interface QuranGroup {
   members: GroupMember[];
   reflections: GroupReflection[];
   createdAt: string;
+  updatedAt?: string;
+  archivedAt?: string;
   adminId: string;
+  createdBy?: string;
+  memberIds?: string[];
+  membersCount?: number;
+  isArchived?: boolean;
+  status?: "active" | "archived" | "deleted";
 }
